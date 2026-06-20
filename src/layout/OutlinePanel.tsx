@@ -1003,7 +1003,7 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
 
       // Find cursor position in the new doc
       let newCursorBlockStart = tr.doc.content.size;
-      tr.doc.forEach((node, offset, idx) => {
+      tr.doc.forEach((_node, offset, idx) => {
         if (idx === newCursorBlockIdx) newCursorBlockStart = offset;
       });
       const targetPos = Math.min(
