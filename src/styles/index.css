@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "katex/dist/katex.min.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -45,6 +46,255 @@ body {
 
 .dark .doc-page {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+/* ── Mermaid diagram blocks ──────────────────────────────────────────────── */
+
+.mermaid-block {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 0.75em 0;
+}
+
+.mermaid-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 4px 10px;
+  background-color: rgba(0, 0, 0, 0.03);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 11px;
+  font-family: "SF Mono", "Fira Code", monospace;
+  color: var(--color-muted);
+  user-select: none;
+}
+
+.dark .mermaid-label {
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+.mermaid-hint {
+  margin-left: auto;
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+/* Source-edit mode */
+.mermaid-source pre {
+  margin: 0;
+  border-radius: 0;
+  background-color: #1e1e1e;
+  color: #d4d4d4;
+  padding: 0.9em 1.1em;
+  overflow-x: auto;
+  min-height: 2.5em;
+}
+
+.mermaid-source pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.85em;
+  font-family: "SF Mono", "Fira Code", monospace;
+  display: block;
+  white-space: pre;
+}
+
+/* Preview mode */
+.mermaid-preview {
+  cursor: pointer;
+}
+
+.mermaid-preview:hover {
+  border-color: var(--color-accent);
+}
+
+.mermaid-svg-wrap {
+  padding: 1.25em;
+  display: flex;
+  justify-content: center;
+  background-color: var(--color-paper);
+}
+
+.mermaid-svg-wrap svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaid-empty {
+  padding: 2em;
+  text-align: center;
+  font-size: 13px;
+  color: var(--color-muted);
+}
+
+.mermaid-error {
+  padding: 0.75em 1em;
+  background-color: rgba(239, 68, 68, 0.06);
+  border-top: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.mermaid-error-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgb(239, 68, 68);
+  margin-bottom: 4px;
+  font-family: "SF Mono", "Fira Code", monospace;
+}
+
+.mermaid-error-msg {
+  margin: 0;
+  font-size: 11px;
+  color: rgb(239, 68, 68);
+  white-space: pre-wrap;
+  background: none;
+  padding: 0;
+  border-radius: 0;
+}
+
+/* Hidden contentDOM — keeps PM's contentDOM in the DOM tree without rendering */
+.mermaid-content-hidden {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ── Highlight, superscript, subscript ──────────────────────────────────── */
+
+.ProseMirror mark {
+  background-color: rgba(253, 224, 71, 0.55);
+  border-radius: 2px;
+  padding: 0 1px;
+  color: inherit;
+}
+
+.dark .ProseMirror mark {
+  background-color: rgba(202, 138, 4, 0.45);
+}
+
+.ProseMirror sup {
+  font-size: 0.75em;
+  line-height: 0;
+  position: relative;
+  vertical-align: baseline;
+  top: -0.5em;
+}
+
+.ProseMirror sub {
+  font-size: 0.75em;
+  line-height: 0;
+  position: relative;
+  vertical-align: baseline;
+  bottom: -0.25em;
+}
+
+/* ── Inline math ─────────────────────────────────────────────────────────── */
+
+/* Hidden source text in preview mode */
+.math-source-hidden {
+  display: inline-block;
+  width: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  font-size: 0;
+  line-height: 0;
+}
+
+/* Source text shown in edit mode */
+.math-source-editing {
+  background-color: rgba(99, 102, 241, 0.1);
+  border-radius: 3px;
+  padding: 0 2px;
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 0.88em;
+  color: var(--color-accent);
+  outline: 1px solid rgba(99, 102, 241, 0.3);
+  outline-offset: 1px;
+}
+
+/* Rendered KaTeX widget */
+.math-inline-widget {
+  display: inline-block;
+  vertical-align: middle;
+  cursor: text;
+  border-radius: 2px;
+  padding: 0 1px;
+  transition: background-color 0.1s;
+}
+
+.math-inline-widget:hover {
+  background-color: rgba(37, 99, 235, 0.08);
+}
+
+.dark .math-inline-widget:hover {
+  background-color: rgba(91, 141, 239, 0.12);
+}
+
+/* Loading placeholder (KaTeX not yet ready) */
+.math-inline-loading {
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 0.88em;
+  color: var(--color-muted);
+  background-color: rgba(0, 0, 0, 0.04);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+
+/* KaTeX error shown inline */
+.math-error-inline {
+  color: rgb(239, 68, 68);
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 0.85em;
+}
+
+/* ── Block math ──────────────────────────────────────────────────────────── */
+
+.math-block-preview {
+  cursor: pointer;
+}
+
+.math-block-preview:hover {
+  border-color: var(--color-accent);
+}
+
+.math-block-rendered {
+  padding: 1.5em 1.25em;
+  display: flex;
+  justify-content: center;
+  background-color: var(--color-paper);
+  overflow-x: auto;
+}
+
+/* KaTeX display math — center the equation block */
+.math-block-rendered .katex-display {
+  margin: 0;
+}
+
+/* ── Find/Replace match highlighting ─────────────────────────────────────── */
+.find-match {
+  background-color: rgba(253, 224, 71, 0.45);
+  border-radius: 2px;
+}
+
+.dark .find-match {
+  background-color: rgba(202, 138, 4, 0.45);
+}
+
+.find-match-active {
+  background-color: rgba(249, 115, 22, 0.55);
+  outline: 1.5px solid rgba(249, 115, 22, 0.9);
+  outline-offset: 0;
+  border-radius: 2px;
+}
+
+.dark .find-match-active {
+  background-color: rgba(234, 88, 12, 0.55);
+  outline-color: rgba(251, 146, 60, 0.9);
 }
 
 /* ProseMirror editor typography */
@@ -214,4 +464,105 @@ body {
 
 ::selection {
   background-color: rgba(37, 99, 235, 0.2);
+}
+
+/* ── Requirement status dropdown widget ─────────────────────────────────── */
+
+/* Hide the raw [Draft] text in the document */
+.req-status-source-hidden {
+  display: none;
+}
+
+/* Subtle highlight when cursor is manually editing inside [Draft] */
+.req-status-editing {
+  background-color: rgba(37, 99, 235, 0.08);
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+/* Widget container — sits inline beside the heading text */
+.req-status-widget {
+  display: inline-flex;
+  position: relative;
+  user-select: none;
+  vertical-align: baseline;
+  margin-left: 0.4em;
+}
+
+/* The badge/trigger button */
+.req-status-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.67em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  padding: 2px 6px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition: filter 0.1s;
+}
+
+.req-status-btn:hover {
+  filter: brightness(0.92);
+}
+
+.req-status-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+/* Missing-status placeholder */
+.req-status-btn--missing {
+  background: var(--color-border) !important;
+  color: var(--color-muted) !important;
+  font-style: italic;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.req-status-caret {
+  font-size: 0.8em;
+  opacity: 0.7;
+}
+
+/* Dropdown menu */
+.req-status-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 200;
+  min-width: 120px;
+  background: var(--color-paper);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  font-size: 0.72em;
+}
+
+.dark .req-status-menu {
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+
+.req-status-option {
+  border-radius: 4px;
+  color: var(--color-text);
+  cursor: pointer;
+  font-weight: 500;
+  padding: 5px 8px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.req-status-option:hover,
+.req-status-option--active {
+  background: var(--color-border);
 }

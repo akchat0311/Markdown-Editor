@@ -1,4 +1,5 @@
 import type { JSONContent } from "@tiptap/core";
+import type { OutlineNode } from "@/types/outline";
 
 /**
  * Pure functions that transform a doc.content[] array.
@@ -149,4 +150,84 @@ export function renameHeading(
       content: trimmed ? [{ type: "text", text: trimmed }] : [],
     };
   });
+}
+
+// ── Multi-select ──────────────────────────────────────────────────────────────
+
+export interface SectionRange {
+  node: OutlineNode;
+  from: number;
+  to: number;
+}
+
+/**
+ * Resolves an OutlineNode[] to their section ranges and removes any range that
+ * is fully contained within another selected range (parent+child selections).
+ * Result is sorted by document order (ascending `from`).
+ */
+export function normalizeSelectedRanges(
+  nodes: OutlineNode[],
+  content: JSONContent[]
+): SectionRange[] {
+  const withRanges: SectionRange[] = nodes.map((node) => {
+    const [from, to] = getSectionRange(content, node.index, node.level ?? 1);
+    return { node, from, to };
+  });
+  withRanges.sort((a, b) => a.from - b.from);
+  // Keep only the outermost ranges — discard any range fully inside another.
+  return withRanges.filter(
+    (item) =>
+      !withRanges.some(
+        (other) =>
+          other !== item &&
+          other.from <= item.from &&
+          other.to >= item.to
+      )
+  );
+}
+
+/**
+ * Removes every section in `ranges` (must be pre-normalized and sorted by from)
+ * in a single pass, processing in reverse order to preserve earlier indices.
+ */
+export function deleteMultipleSections(
+  content: JSONContent[],
+  ranges: SectionRange[]
+): JSONContent[] {
+  let result = [...content];
+  for (const { from, to } of [...ranges].reverse()) {
+    result = [...result.slice(0, from), ...result.slice(to)];
+  }
+  return result.length > 0 ? result : [{ type: "paragraph" }];
+}
+
+/**
+ * Deep-clones every selected section, appends " Copy" to each root heading,
+ * and inserts all copies immediately after the last selected section.
+ */
+export function duplicateMultipleSections(
+  content: JSONContent[],
+  ranges: SectionRange[]
+): JSONContent[] {
+  const insertAfter = ranges[ranges.length - 1].to;
+  const copies = ranges.flatMap(({ from, to }) => {
+    const section = JSON.parse(
+      JSON.stringify(content.slice(from, to))
+    ) as JSONContent[];
+    const heading = section[0];
+    if (heading?.type === "heading" && Array.isArray(heading.content)) {
+      const last = heading.content[heading.content.length - 1];
+      if (last?.type === "text") {
+        last.text = (last.text ?? "") + " Copy";
+      } else {
+        heading.content.push({ type: "text", text: " Copy" });
+      }
+    }
+    return section;
+  });
+  return [
+    ...content.slice(0, insertAfter),
+    ...copies,
+    ...content.slice(insertAfter),
+  ];
 }

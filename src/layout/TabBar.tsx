@@ -34,9 +34,13 @@ export function TabBar({ onRequestClose }: TabBarProps = {}) {
             ].join(" ")}
             onClick={() => setActiveTab(tab.id)}
           >
-            {tab.isDirty && (
+            {tab.isReadOnly ? (
+              <span className="shrink-0 rounded-sm bg-[var(--color-border)] px-1 py-px text-[9px] font-medium text-[var(--color-muted)]">
+                Sample
+              </span>
+            ) : tab.isDirty ? (
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
-            )}
+            ) : null}
             <span className="truncate">{tab.title || "Untitled"}</span>
             {tabs.length > 1 && (
               <button

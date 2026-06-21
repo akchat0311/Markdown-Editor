@@ -1,5 +1,6 @@
 import { toMarkdown } from "mdast-util-to-markdown";
 import { gfmToMarkdown } from "mdast-util-gfm";
+import { mathToMarkdown } from "mdast-util-math";
 import type {
   BlockContent,
   Blockquote,
@@ -24,7 +25,11 @@ import { DEFAULT_CALLOUT_TYPE, formatCalloutMarker, type CalloutType } from "./c
 import type { PMMark, PMNode } from "./types";
 
 const TO_MARKDOWN_OPTIONS = {
-  extensions: [gfmToMarkdown({ tablePipeAlign: false })],
+  // singleTilde: false — ensures ~~text~~ for strikethrough, leaving ~text~ clean for subscript.
+  // gfmToMarkdown passes the option through to mdast-util-gfm-strikethrough at runtime but the
+  // public TypeScript types don't expose it, hence the cast.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  extensions: [gfmToMarkdown({ tablePipeAlign: false, singleTilde: false } as any), mathToMarkdown()],
   bullet: "-" as const,
   bulletOther: "*" as const,
   emphasis: "*" as const,
@@ -55,12 +60,17 @@ export function serializeDocToMarkdown(doc: PMNode): string {
 }
 
 /**
- * mdast-util-to-markdown's built-in unsafe list always escapes `_` in phrasing
- * context (the list is additive-only; it can't be removed via options).
- * Since we use `*` for emphasis, underscores in plain text like `REQ_001` never
- * form emphasis and don't need escaping. This strips `\_` → `_` everywhere
- * EXCEPT inside code fences, where content is verbatim and `\_` would be
- * literal user-typed characters.
+ * mdast-util-to-markdown's built-in unsafe list escapes `_` and `[` in
+ * phrasing context (the list is additive-only; entries can't be removed).
+ *
+ * `\_` → `_`: underscores in plain text like `REQ_001` never form emphasis
+ * because we use `*` for emphasis.
+ *
+ * `\[text]` → `[text]`: square brackets that don't start a link or reference
+ * (i.e. `]` is NOT followed by `(` or `[`) are safe unescaped. Requirement
+ * status markers like `[Draft]` fall into this category.
+ *
+ * Both transforms are skipped inside code fences where content is verbatim.
  */
 function unescapeUnderscores(md: string): string {
   const lines = md.split("\n");
@@ -73,7 +83,11 @@ function unescapeUnderscores(md: string): string {
           fenceMarker = m[1];
           return line;
         }
-        return line.replace(/\\_/g, "_");
+        return line
+          .replace(/\\_/g, "_")
+          // Unescape \[text] → [text] ONLY when bracket does not start a
+          // callout marker (\[!TYPE]) and ] is not followed by ( or [.
+          .replace(/\\\[(?!!)([^\]]*)\](?![(\[])/g, "[$1]");
       }
       if (line.startsWith(fenceMarker) && line.slice(fenceMarker.length).trim() === "") {
         fenceMarker = "";
@@ -132,6 +146,15 @@ function blockToMdast(node: PMNode): BlockContent {
       return calloutToMdast(node);
 
     case "codeBlock":
+      if (node.attrs?.language === "$$") {
+        // Block math: serialize as $$...$$, not as a fenced code block
+        return {
+          type: "math",
+          value: flattenPlainText(node.content ?? []),
+          meta: null,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any;
+      }
       return {
         type: "code",
         lang: (node.attrs?.language as string) || null,
@@ -174,12 +197,20 @@ function calloutToMdast(node: PMNode): Blockquote {
   return { type: "blockquote", children: [markerPara, ...body] };
 }
 
+type GfmAlign = "left" | "center" | "right" | null;
+
 function tableToMdast(node: PMNode): Table {
   const rows = node.content ?? [];
-  const firstRowCellCount = rows[0]?.content?.length ?? 0;
+  // Derive GFM column alignment from the first row's cell attrs
+  const headerCells = rows[0]?.content ?? [];
+  const align: GfmAlign[] = headerCells.map((cell) => {
+    const a = cell.attrs?.align;
+    return a === "left" || a === "center" || a === "right" ? a : null;
+  });
+
   return {
     type: "table",
-    align: Array.from({ length: firstRowCellCount }, () => null),
+    align,
     children: rows.map(
       (row): TableRow => ({
         type: "tableRow",
@@ -235,6 +266,12 @@ function textNodeToMdast(node: PMNode): PhrasingContent[] {
   const text = node.text ?? "";
   const hasMark = (type: string) => marks.some((m) => m.type === type);
 
+  if (hasMark("inlineMath")) {
+    // Inline math: wrap in $...$. The text content IS the LaTeX source (no delimiters stored).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return [{ type: "inlineMath", value: text } as any];
+  }
+
   if (hasMark("code")) {
     return [{ type: "inlineCode", value: text } satisfies InlineCode];
   }
@@ -246,6 +283,16 @@ function textNodeToMdast(node: PMNode): PhrasingContent[] {
   }
   if (hasMark("underline")) {
     phrasing = [{ type: "html", value: "<u>" }, ...phrasing, { type: "html", value: "</u>" }];
+  }
+  // Inline marks using custom syntax (html nodes are output verbatim by toMarkdown)
+  if (hasMark("subscript")) {
+    phrasing = [{ type: "html", value: "~" }, ...phrasing, { type: "html", value: "~" }];
+  }
+  if (hasMark("superscript")) {
+    phrasing = [{ type: "html", value: "^" }, ...phrasing, { type: "html", value: "^" }];
+  }
+  if (hasMark("highlight")) {
+    phrasing = [{ type: "html", value: "==" }, ...phrasing, { type: "html", value: "==" }];
   }
   if (hasMark("italic")) {
     phrasing = [{ type: "emphasis", children: phrasing }];

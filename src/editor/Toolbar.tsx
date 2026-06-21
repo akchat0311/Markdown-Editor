@@ -39,6 +39,71 @@ function Divider() {
   return <span className="mx-0.5 h-4 w-px shrink-0 bg-[var(--color-border)]" />;
 }
 
+// ── Alignment icons ───────────────────────────────────────────────────────────
+
+function IconAlignLeft() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+      <line x1="1" y1="3" x2="13" y2="3" />
+      <line x1="1" y1="6" x2="9" y2="6" />
+      <line x1="1" y1="9" x2="11" y2="9" />
+      <line x1="1" y1="12" x2="7" y2="12" />
+    </svg>
+  );
+}
+
+function IconAlignCenter() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+      <line x1="1" y1="3" x2="13" y2="3" />
+      <line x1="3" y1="6" x2="11" y2="6" />
+      <line x1="2" y1="9" x2="12" y2="9" />
+      <line x1="4" y1="12" x2="10" y2="12" />
+    </svg>
+  );
+}
+
+function IconAlignRight() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+      <line x1="1" y1="3" x2="13" y2="3" />
+      <line x1="5" y1="6" x2="13" y2="6" />
+      <line x1="3" y1="9" x2="13" y2="9" />
+      <line x1="7" y1="12" x2="13" y2="12" />
+    </svg>
+  );
+}
+
+function IconAlignTop() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+      <line x1="1" y1="1" x2="13" y2="1" />
+      <rect x="3" y="3" width="3" height="8" rx="0.5" />
+      <rect x="8" y="3" width="3" height="5" rx="0.5" />
+    </svg>
+  );
+}
+
+function IconAlignMiddle() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+      <line x1="1" y1="7" x2="13" y2="7" />
+      <rect x="3" y="2" width="3" height="10" rx="0.5" />
+      <rect x="8" y="3.5" width="3" height="7" rx="0.5" />
+    </svg>
+  );
+}
+
+function IconAlignBottom() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+      <line x1="1" y1="13" x2="13" y2="13" />
+      <rect x="3" y="3" width="3" height="8" rx="0.5" />
+      <rect x="8" y="6" width="3" height="5" rx="0.5" />
+    </svg>
+  );
+}
+
 // ── Table action icons ────────────────────────────────────────────────────────
 
 function IconRowAbove() {
@@ -116,6 +181,9 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
       strike: e.isActive("strike"),
       code: e.isActive("code"),
       link: e.isActive("link"),
+      highlight: e.isActive("highlight"),
+      superscript: e.isActive("superscript"),
+      subscript: e.isActive("subscript"),
       // Table context
       inTable: e.isActive("table"),
       canAddRowBefore: e.can().addRowBefore(),
@@ -124,6 +192,9 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
       canAddColAfter: e.can().addColumnAfter(),
       canDeleteRow: e.can().deleteRow(),
       canDeleteCol: e.can().deleteColumn(),
+      // Cell alignment (reads from whichever cell type is active)
+      cellAlign: e.getAttributes("tableCell").align ?? e.getAttributes("tableHeader").align ?? null,
+      cellVerticalAlign: e.getAttributes("tableCell").verticalAlign ?? e.getAttributes("tableHeader").verticalAlign ?? null,
     }),
   });
 
@@ -188,9 +259,83 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
         🔗
       </ToolbarButton>
 
+      <Divider />
+
+      <ToolbarButton
+        label="Highlight (Ctrl+Shift+H)"
+        active={state.highlight}
+        onClick={() => editor.chain().focus().toggleMark("highlight").run()}
+      >
+        <span className="rounded px-0.5" style={{ background: "rgba(253,224,71,0.6)" }}>H</span>
+      </ToolbarButton>
+      <ToolbarButton
+        label="Superscript"
+        active={state.superscript}
+        onClick={() => editor.chain().focus().toggleMark("superscript").run()}
+      >
+        x<sup style={{ fontSize: "0.65em" }}>²</sup>
+      </ToolbarButton>
+      <ToolbarButton
+        label="Subscript"
+        active={state.subscript}
+        onClick={() => editor.chain().focus().toggleMark("subscript").run()}
+      >
+        x<sub style={{ fontSize: "0.65em" }}>₂</sub>
+      </ToolbarButton>
+
       {/* ── Table controls (visible only when cursor is in a table) ── */}
       {state.inTable && (
         <>
+          <Divider />
+
+          {/* Horizontal alignment */}
+          <ToolbarButton
+            label="Align Left"
+            active={state.cellAlign === "left"}
+            onClick={() => editor.chain().focus().setCellAttribute("align", state.cellAlign === "left" ? null : "left").run()}
+          >
+            <IconAlignLeft />
+          </ToolbarButton>
+          <ToolbarButton
+            label="Align Center"
+            active={state.cellAlign === "center"}
+            onClick={() => editor.chain().focus().setCellAttribute("align", state.cellAlign === "center" ? null : "center").run()}
+          >
+            <IconAlignCenter />
+          </ToolbarButton>
+          <ToolbarButton
+            label="Align Right"
+            active={state.cellAlign === "right"}
+            onClick={() => editor.chain().focus().setCellAttribute("align", state.cellAlign === "right" ? null : "right").run()}
+          >
+            <IconAlignRight />
+          </ToolbarButton>
+
+          <Divider />
+
+          {/* Vertical alignment */}
+          <ToolbarButton
+            label="Align Top"
+            active={state.cellVerticalAlign === "top"}
+            onClick={() => editor.chain().focus().setCellAttribute("verticalAlign", state.cellVerticalAlign === "top" ? null : "top").run()}
+          >
+            <IconAlignTop />
+          </ToolbarButton>
+          <ToolbarButton
+            label="Align Middle"
+            active={state.cellVerticalAlign === "middle"}
+            onClick={() => editor.chain().focus().setCellAttribute("verticalAlign", state.cellVerticalAlign === "middle" ? null : "middle").run()}
+          >
+            <IconAlignMiddle />
+          </ToolbarButton>
+          <ToolbarButton
+            label="Align Bottom"
+            active={state.cellVerticalAlign === "bottom"}
+            onClick={() => editor.chain().focus().setCellAttribute("verticalAlign", state.cellVerticalAlign === "bottom" ? null : "bottom").run()}
+          >
+            <IconAlignBottom />
+          </ToolbarButton>
+
           <Divider />
 
           <ToolbarButton

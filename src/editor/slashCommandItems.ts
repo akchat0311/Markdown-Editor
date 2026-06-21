@@ -38,6 +38,33 @@ export const SLASH_COMMAND_ITEMS: SlashCommandItem[] = [
       editor.chain().focus().deleteRange(range).setNode("heading", { level: 3 }).run(),
   },
   {
+    id: "heading4",
+    label: "Heading 4",
+    description: "Sub-section heading",
+    icon: "H4",
+    keywords: ["h4", "heading"],
+    command: (editor, range) =>
+      editor.chain().focus().deleteRange(range).setNode("heading", { level: 4 }).run(),
+  },
+  {
+    id: "heading5",
+    label: "Heading 5",
+    description: "Minor heading",
+    icon: "H5",
+    keywords: ["h5", "heading"],
+    command: (editor, range) =>
+      editor.chain().focus().deleteRange(range).setNode("heading", { level: 5 }).run(),
+  },
+  {
+    id: "heading6",
+    label: "Heading 6",
+    description: "Smallest heading",
+    icon: "H6",
+    keywords: ["h6", "heading"],
+    command: (editor, range) =>
+      editor.chain().focus().deleteRange(range).setNode("heading", { level: 6 }).run(),
+  },
+  {
     id: "bulletList",
     label: "Bullet list",
     description: "Unordered list",
@@ -98,6 +125,24 @@ export const SLASH_COMMAND_ITEMS: SlashCommandItem[] = [
     icon: "</>",
     keywords: ["code", "snippet", "fence"],
     command: (editor, range) => editor.chain().focus().deleteRange(range).setCodeBlock().run(),
+  },
+  {
+    id: "mermaid",
+    label: "Mermaid diagram",
+    description: "Flowchart, sequence, Gantt, and more",
+    icon: "⬡",
+    keywords: ["mermaid", "diagram", "flowchart", "chart", "graph", "sequence", "gantt"],
+    command: (editor, range) =>
+      editor.chain().focus().deleteRange(range).setCodeBlock({ language: "mermaid" }).run(),
+  },
+  {
+    id: "math",
+    label: "Math block",
+    description: "LaTeX display equation (KaTeX)",
+    icon: "∑",
+    keywords: ["math", "latex", "equation", "katex", "formula"],
+    command: (editor, range) =>
+      editor.chain().focus().deleteRange(range).setCodeBlock({ language: "$$" }).run(),
   },
   {
     id: "blockquote",

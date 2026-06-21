@@ -1,6 +1,8 @@
 import type { JSONContent } from "@tiptap/core";
 import type { OutlineNode } from "@/types/outline";
+import type { RequirementStatus } from "@/types/requirementStatus";
 import { getSectionRange, renameHeading } from "@/editor/utils/outlineOps";
+import { resolveRequirementStatus } from "@/services/requirementStatusService";
 
 // ── Pattern derivation ────────────────────────────────────────────────────────
 
@@ -56,7 +58,7 @@ function escapeRegex(s: string): string {
  * The capture group returns the raw digit string exactly as it appears in the
  * heading — preserving the original zero-padding for exact-match deduplication.
  */
-function buildDetectionRegex(prefix: string): RegExp {
+export function buildDetectionRegex(prefix: string): RegExp {
   return new RegExp("^" + escapeRegex(prefix) + "(\\d+)");
 }
 
@@ -166,6 +168,113 @@ export function analyzeRequirements(
   }
 
   return { requirements, duplicates, missing, countsBySection };
+}
+
+// ── Requirements Index ────────────────────────────────────────────────────────
+
+export interface RequirementRecord {
+  id: string;
+  /** Canonical status id from config (e.g. "draft", "review") or "unknown". */
+  status: string;
+  /** Label of the nearest non-requirement ancestor heading, or "—" if none. */
+  section: string;
+  /** ProseMirror absolute offset for click-to-navigate. */
+  pmPos: number;
+}
+
+export interface RequirementIndex {
+  total: number;
+  /** Counts keyed by status.id; always includes "unknown". */
+  statusCounts: Record<string, number>;
+  requirements: RequirementRecord[];
+}
+
+/**
+ * Extracts the raw text inside the last `[…]` bracket group from a heading label.
+ * Returns null when no bracket group is found.
+ *
+ * "REQ_001 [Draft]"   → "Draft"
+ * "REQ_001 [In Review]" → "In Review"
+ * "REQ_001"           → null
+ */
+export function extractStatusText(label: string): string | null {
+  const match = label.match(/\[([^\]]+)\]\s*$/);
+  return match ? match[1].trim() : null;
+}
+
+/**
+ * Builds a RequirementIndex from the flat outline in a single O(n) pass.
+ *
+ * Section resolution: walks document order, maintaining a level→label map of
+ * the most-recent non-requirement headings.  When a requirement is found, the
+ * nearest ancestor level (highest level number strictly below the requirement's
+ * level) is used as the section name.
+ *
+ * @param statuses  Loaded from statusConfigStore — alias resolution table.
+ * Returns null when patternExample is not a valid pattern.
+ */
+export function buildRequirementIndex(
+  flatOutline: OutlineNode[],
+  patternExample: string,
+  statuses: RequirementStatus[]
+): RequirementIndex | null {
+  const derived = derivePattern(patternExample);
+  if (!derived) return null;
+
+  const { prefix } = derived;
+  const regex = buildDetectionRegex(prefix);
+
+  // First pass: determine which nodes are requirements (by key) so we can skip
+  // them when building the section stack.
+  const reqKeySet = new Set<string>();
+  for (const node of flatOutline) {
+    if (regex.test(node.label)) reqKeySet.add(node.key);
+  }
+
+  // Second pass: single walk to resolve section + build records.
+  const sectionByLevel: Record<number, string> = {};
+  const requirements: RequirementRecord[] = [];
+
+  for (const node of flatOutline) {
+    const level = node.level ?? 1;
+
+    if (!reqKeySet.has(node.key)) {
+      // Non-requirement heading: update the section stack.
+      // Evict all entries at levels >= this level (shallower heading resets scope).
+      for (const l of Object.keys(sectionByLevel).map(Number)) {
+        if (l >= level) delete sectionByLevel[l];
+      }
+      sectionByLevel[level] = node.label;
+    } else {
+      // Requirement heading: resolve nearest parent section.
+      const parentLevels = Object.keys(sectionByLevel)
+        .map(Number)
+        .filter((l) => l < level);
+      const nearestLevel = parentLevels.length ? Math.max(...parentLevels) : null;
+      const section = nearestLevel !== null ? sectionByLevel[nearestLevel] : "—";
+
+      const rawLabel = node.label;
+      const idMatch = rawLabel.match(regex);
+      const id = idMatch ? prefix + idMatch[1] : rawLabel;
+
+      const rawStatusText = extractStatusText(rawLabel);
+      const status = rawStatusText
+        ? resolveRequirementStatus(rawStatusText, statuses)
+        : "unknown";
+
+      requirements.push({ id, status, section, pmPos: node.pmPos });
+    }
+  }
+
+  // Build statusCounts dynamically from config ids + "unknown".
+  const statusCounts: Record<string, number> = { unknown: 0 };
+  for (const s of statuses) statusCounts[s.id] = 0;
+  for (const r of requirements) {
+    if (r.status in statusCounts) statusCounts[r.status]++;
+    else statusCounts.unknown++;
+  }
+
+  return { total: requirements.length, statusCounts, requirements };
 }
 
 // ── Mutation helpers ──────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import type {
   Blockquote,
   Image as MdastImage,
@@ -12,11 +13,18 @@ import type {
 } from "mdast";
 import type { PMMark, PMNode } from "./types";
 import { parseCalloutMarker } from "./calloutSyntax";
+import { transformInlineMarks } from "./inlineMark";
 
-const processor = unified().use(remarkParse).use(remarkGfm);
+// singleTilde: false — prevents ~text~ from being parsed as strikethrough so
+// our custom subscript syntax (~text~) can coexist with ~~strikethrough~~
+const processor = unified().use(remarkParse).use(remarkGfm, { singleTilde: false }).use(remarkMath);
 
 export function parseMarkdownToDoc(markdown: string): PMNode {
   const tree = processor.parse(markdown) as Root;
+  // Apply ==highlight==, ^sup^, ~sub~ transformations.
+  // Must run after processor.parse() because transformer plugins don't run when
+  // using parse() directly (they require process() or run()).
+  transformInlineMarks(tree);
   const content = tree.children.map(blockToPM);
   return { type: "doc", content: content.length ? content : [{ type: "paragraph" }] };
 }
@@ -48,6 +56,15 @@ function blockToPM(node: RootContent): PMNode {
         type: "codeBlock",
         attrs: { language: node.lang ?? null },
         content: node.value ? [{ type: "text", text: node.value }] : [],
+      };
+
+    // remark-math: block math ($$...$$) → codeBlock with sentinel language "$$"
+    case "math":
+      return {
+        type: "codeBlock",
+        attrs: { language: "$$" },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        content: (node as any).value ? [{ type: "text", text: (node as any).value }] : [],
       };
 
     case "thematicBreak":
@@ -117,12 +134,15 @@ function blockquoteToPM(node: Blockquote): PMNode {
 }
 
 function tableNodeToPM(node: Table): PMNode {
+  // GFM stores alignment per column in node.align; propagate to each cell's attrs
+  const columnAlign = node.align ?? [];
   return {
     type: "table",
     content: node.children.map((row, rowIndex) => ({
       type: "tableRow",
-      content: row.children.map((cell) => ({
+      content: row.children.map((cell, colIndex) => ({
         type: rowIndex === 0 ? "tableHeader" : "tableCell",
+        attrs: { align: columnAlign[colIndex] ?? null },
         content: [{ type: "paragraph", content: flattenInline(cell.children) }],
       })),
     })),
@@ -220,6 +240,14 @@ function flattenSingleNode(node: PhrasingContent, inherited: PMMark[]): PMNode[]
       return node.value
         ? [{ type: "text", text: node.value, marks: addMark(inherited, { type: "code" }) }]
         : [];
+
+    // remark-math: inline math ($...$) → text with inlineMath mark (no $ delimiters stored)
+    case "inlineMath":
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (node as any).value
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ? [{ type: "text", text: (node as any).value, marks: addMark(inherited, { type: "inlineMath" }) }]
+        : [];
     case "link":
       return flattenInline(
         node.children,
@@ -232,8 +260,20 @@ function flattenSingleNode(node: PhrasingContent, inherited: PMMark[]): PMNode[]
       return node.alt ? [{ type: "text", text: node.alt, marks: inherited }] : [];
     case "html":
       return node.value ? [{ type: "text", text: node.value, marks: inherited }] : [];
-    default:
+    default: {
+      // Handle custom MDAST node types produced by transformInlineMarks:
+      // "mark" → highlight, "superscript" → superscript, "subscript" → subscript
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const n = node as any;
+      const markType =
+        n.type === "mark" ? "highlight" :
+        n.type === "superscript" ? "superscript" :
+        n.type === "subscript" ? "subscript" : null;
+      if (markType && Array.isArray(n.children)) {
+        return flattenInline(n.children, addMark(inherited, { type: markType }));
+      }
       return [];
+    }
   }
 }
 

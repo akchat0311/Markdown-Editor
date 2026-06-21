@@ -6,18 +6,20 @@ import { createEditorExtensions } from "@/editor/extensions";
 import { parseMarkdownToDoc, serializeDocToMarkdown } from "@/markdown";
 import { useTabStore, useUIStore, getActiveTab } from "@/stores";
 import { useToastStore } from "@/stores/toastStore";
+import { useStatusConfigStore } from "@/stores/statusConfigStore";
 import { Header } from "@/layout/Header";
 import { TabBar } from "@/layout/TabBar";
 import { StatusBar } from "@/layout/StatusBar";
 import { Toaster } from "@/layout/Toast";
 import { GlobalSearch } from "@/search/GlobalSearch";
+import { FindReplaceBar } from "@/layout/FindReplaceBar";
 import { useAutosave } from "@/persistence/useAutosave";
 import { openMarkdownFile, saveMarkdownFile } from "@/persistence/fileAccess";
 import { addRecentFile, removeRecentFile } from "@/persistence/recentFiles";
 import type { RecentFile } from "@/persistence/recentFiles";
 import { ResizeHandle } from "@/layout/ResizeHandle";
 import { OutlinePanel } from "@/layout/OutlinePanel";
-import { INITIAL_MARKDOWN } from "@/stores/tabStore";
+import { RequirementsIndex } from "@/layout/RequirementsIndex";
 
 // Module-level stable extensions prevent Tiptap compareOptions from
 // calling setOptions() synchronously during React's render phase.
@@ -29,6 +31,10 @@ interface CloseConfirm {
 }
 
 export default function App() {
+  // Load requirement status config once at startup.
+  const loadStatusConfig = useStatusConfigStore((s) => s.load);
+  useEffect(() => { loadStatusConfig(); }, [loadStatusConfig]);
+
   const theme = useUIStore((s) => s.theme);
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const sidebarWidth = useUIStore((s) => s.sidebarWidth);
@@ -48,8 +54,11 @@ export default function App() {
   const isLoadingContentRef = useRef(false);
 
   const [closeConfirm, setCloseConfirm] = useState<CloseConfirm | null>(null);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findShowReplace, setFindShowReplace] = useState(false);
+  const [reqIndexOpen, setReqIndexOpen] = useState(false);
 
-  const initialDoc = parseMarkdownToDoc(activeTab?.markdown ?? INITIAL_MARKDOWN);
+  const initialDoc = parseMarkdownToDoc(activeTab?.markdown ?? "");
 
   const editor = useEditor({
     extensions: EDITOR_EXTENSIONS,
@@ -57,6 +66,7 @@ export default function App() {
     onUpdate: ({ editor }) => {
       if (sourceModeRef.current) return;
       if (isLoadingContentRef.current) return;
+      if (getActiveTab(useTabStore.getState())?.isReadOnly) return;
       const json = editor.getJSON();
       queueMicrotask(() => {
         updateActiveTabRef.current({
@@ -78,6 +88,33 @@ export default function App() {
     editor.commands.setContent(parseMarkdownToDoc(activeTab.markdown));
     setTimeout(() => { isLoadingContentRef.current = false; }, 0);
   }, [editor, activeTab]);
+
+  // Load the welcome template into the initial read-only tab.
+  // Only fires once (editor dep); bails out if the user has already switched away.
+  useEffect(() => {
+    if (!editor) return;
+    const welcomeTabId = useTabStore.getState().activeTabId;
+    const welcomeTab = useTabStore.getState().tabs.find((t) => t.id === welcomeTabId);
+    if (!welcomeTab?.isReadOnly) return;
+
+    fetch("/templates/welcome.md")
+      .then((r) => {
+        if (!r.ok) throw new Error("not found");
+        return r.text();
+      })
+      .then((markdown) => {
+        // User may have switched away while the fetch was in flight — don't stomp their content.
+        if (useTabStore.getState().activeTabId !== welcomeTabId) return;
+        useTabStore.getState().updateTab(welcomeTabId, { markdown });
+        isLoadingContentRef.current = true;
+        editor.commands.setContent(parseMarkdownToDoc(markdown));
+        setTimeout(() => { isLoadingContentRef.current = false; }, 0);
+      })
+      .catch(() => {
+        // File missing in dev or prod — leave the blank placeholder; not a crash.
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor]);
 
   const { flush } = useAutosave();
 
@@ -133,6 +170,10 @@ export default function App() {
     const state = useTabStore.getState();
     const tab = getActiveTab(state);
     if (!tab) return;
+    if (tab.isReadOnly) {
+      useToastStore.getState().show("Sample document — use File → New to create your own.", "info");
+      return;
+    }
 
     try {
       const handle = await saveMarkdownFile(
@@ -166,6 +207,10 @@ export default function App() {
     const state = useTabStore.getState();
     const tab = getActiveTab(state);
     if (!tab) return;
+    if (tab.isReadOnly) {
+      useToastStore.getState().show("Sample document — use File → New to create your own.", "info");
+      return;
+    }
 
     try {
       // Pass null to force Save As picker regardless of existing handle
@@ -244,7 +289,7 @@ export default function App() {
   const handleRequestClose = useCallback((tabId: string) => {
     const tab = useTabStore.getState().tabs.find((t) => t.id === tabId);
     if (!tab) return;
-    if (tab.isDirty) {
+    if (tab.isDirty && !tab.isReadOnly) {
       setCloseConfirm({ tabId, tabTitle: tab.title });
     } else {
       useTabStore.getState().closeTab(tabId);
@@ -305,6 +350,12 @@ export default function App() {
     };
   });
 
+  // Keep stable refs for find state setters
+  const setFindOpenRef = useRef(setFindOpen);
+  setFindOpenRef.current = setFindOpen;
+  const setFindShowReplaceRef = useRef(setFindShowReplace);
+  setFindShowReplaceRef.current = setFindShowReplace;
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
@@ -338,6 +389,24 @@ export default function App() {
         e.preventDefault();
         const { activeTabId } = useTabStore.getState();
         handlersRef.current.handleRequestClose(activeTabId);
+        return;
+      }
+      if (e.key === "f") {
+        e.preventDefault();
+        setFindShowReplaceRef.current(false);
+        setFindOpenRef.current(true);
+        return;
+      }
+      if (e.key === "h") {
+        e.preventDefault();
+        setFindShowReplaceRef.current(true);
+        setFindOpenRef.current(true);
+        return;
+      }
+      if (e.key === "r" && e.shiftKey) {
+        e.preventDefault();
+        setReqIndexOpen((o) => !o);
+        return;
       }
     };
     document.addEventListener("keydown", onKeyDown);
@@ -368,6 +437,7 @@ export default function App() {
               new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true })
             )
           }
+          onRequirements={() => setReqIndexOpen((o) => !o)}
         />
 
         <TabBar onRequestClose={handleRequestClose} />
@@ -379,11 +449,21 @@ export default function App() {
               <ResizeHandle onDelta={adjustSidebar} />
             </>
           )}
-          <EditorMain />
+          <div className="relative flex flex-1 min-w-0">
+            <EditorMain />
+            <FindReplaceBar
+              open={findOpen}
+              showReplace={findShowReplace}
+              onClose={() => setFindOpen(false)}
+            />
+          </div>
         </div>
 
         <StatusBar />
       </div>
+
+      {/* Requirements Index */}
+      <RequirementsIndex open={reqIndexOpen} onClose={() => setReqIndexOpen(false)} />
 
       {/* Unsaved changes dialog */}
       {closeConfirm && (

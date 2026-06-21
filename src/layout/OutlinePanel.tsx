@@ -23,7 +23,12 @@ import {
   deleteSection,
   renameHeading,
   isInsideSection,
+  normalizeSelectedRanges,
+  deleteMultipleSections,
+  duplicateMultipleSections,
 } from "@/editor/utils/outlineOps";
+import { serializeDocToMarkdown } from "@/markdown/serializer";
+import { useToastStore } from "@/stores/toastStore";
 import { TextSelection } from "@tiptap/pm/state";
 import {
   derivePattern,
@@ -56,9 +61,47 @@ interface DropTarget {
 
 interface ContextMenuState {
   node: OutlineNode;
-  siblings: OutlineNode[];
+  canMoveUp: boolean;
+  canMoveDown: boolean;
   x: number;
   y: number;
+  subtreeIds: Set<string>;
+  siblingIds: Set<string>;
+  childrenIds: Set<string>;
+}
+
+// ── Tree traversal helpers ────────────────────────────────────────────────────
+
+function findNodeInTree(
+  tree: OutlineNode[],
+  sid: string
+): OutlineNode | undefined {
+  for (const n of tree) {
+    if (stableDragId(n) === sid) return n;
+    const found = findNodeInTree(n.children, sid);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+// Returns the parent node, or null if the node is at root level (or not found).
+function findParentInTree(
+  tree: OutlineNode[],
+  sid: string
+): OutlineNode | null {
+  for (const n of tree) {
+    if (n.children.some((c) => stableDragId(c) === sid)) return n;
+    const found = findParentInTree(n.children, sid);
+    if (found) return found;
+  }
+  return null;
+}
+
+// Stable drag identifier: survives PM-offset shifts caused by content operations.
+// Uses level + label rather than the PM-offset-based node.key so the identity
+// remains valid even if the 150 ms outline debounce fires during a drag.
+function stableDragId(node: OutlineNode): string {
+  return `${node.level ?? 1}::${node.label}`;
 }
 
 // ── Search state computation ──────────────────────────────────────────────────
@@ -124,11 +167,11 @@ function labelClass(level: number, isActive: boolean): string {
 
 interface TreeItemProps {
   node: OutlineNode;
-  siblings: OutlineNode[];
   depth: number;
   activeKey: string | null;
   collapsedKeys: Set<string>;
   searchState: SearchState | null;
+  selectedKeys: Set<string>;
   dragKey: string | null;
   validDropTargets: Set<string>;
   dropTarget: DropTarget | null;
@@ -137,6 +180,7 @@ interface TreeItemProps {
   duplicateNodeKeys: Set<string>;
   renameNodeKey: string | null;
   renameValue: string;
+  onNodeClick: (e: React.MouseEvent, node: OutlineNode) => void;
   onSelect: (node: OutlineNode) => void;
   onRename: (node: OutlineNode) => void;
   onToggle: (key: string) => void;
@@ -144,11 +188,7 @@ interface TreeItemProps {
   onDragOver: (e: React.DragEvent, node: OutlineNode) => void;
   onDrop: (node: OutlineNode) => void;
   onDragEnd: () => void;
-  onContextMenu: (
-    e: React.MouseEvent,
-    node: OutlineNode,
-    siblings: OutlineNode[]
-  ) => void;
+  onContextMenu: (e: React.MouseEvent, node: OutlineNode) => void;
   onRenameChange: (v: string) => void;
   onRenameConfirm: () => void;
   onRenameCancel: () => void;
@@ -156,11 +196,11 @@ interface TreeItemProps {
 
 function TreeItem({
   node,
-  siblings,
   depth,
   activeKey,
   collapsedKeys,
   searchState,
+  selectedKeys,
   dragKey,
   validDropTargets,
   dropTarget,
@@ -169,6 +209,7 @@ function TreeItem({
   duplicateNodeKeys,
   renameNodeKey,
   renameValue,
+  onNodeClick,
   onSelect,
   onRename,
   onToggle,
@@ -212,15 +253,17 @@ function TreeItem({
   const isCollapsed = !forceExpanded && collapsedKeys.has(node.key);
 
   const isRenaming = renameNodeKey === node.key;
-  const isDragging = dragKey === node.key;
-  const isValidDropTarget = validDropTargets.has(node.key);
+  const nodeSid = stableDragId(node);
+  const isSelected = selectedKeys.has(nodeSid);
+  const isDragging = dragKey === nodeSid;
+  const isValidDropTarget = validDropTargets.has(nodeSid);
   const isDropBefore =
     isValidDropTarget &&
-    dropTarget?.key === node.key &&
+    dropTarget?.key === nodeSid &&
     dropTarget.position === "before";
   const isDropAfter =
     isValidDropTarget &&
-    dropTarget?.key === node.key &&
+    dropTarget?.key === nodeSid &&
     dropTarget.position === "after";
 
   const matchQuery =
@@ -237,6 +280,7 @@ function TreeItem({
     activeKey,
     collapsedKeys,
     searchState,
+    selectedKeys,
     dragKey,
     validDropTargets,
     dropTarget,
@@ -245,6 +289,7 @@ function TreeItem({
     duplicateNodeKeys,
     renameNodeKey,
     renameValue,
+    onNodeClick,
     onSelect,
     onRename,
     onToggle,
@@ -274,6 +319,7 @@ function TreeItem({
         className={[
           "group flex cursor-pointer select-none items-center gap-1 rounded-sm py-[3px] pr-2 text-xs leading-5 outline-none",
           "hover:bg-[var(--color-border)]",
+          isSelected ? "bg-[var(--color-accent)]/10" : "",
           isDragging ? "opacity-40" : "",
         ].join(" ")}
         style={{
@@ -282,7 +328,7 @@ function TreeItem({
             ? { boxShadow: "inset 2px 0 0 var(--color-accent)" }
             : {}),
         }}
-        onClick={() => { if (renameNodeKey === null) onSelect(node); }}
+        onClick={(e) => { if (renameNodeKey === null) onNodeClick(e, node); }}
         onDoubleClick={(e) => { e.stopPropagation(); if (renameNodeKey === null) onRename(node); }}
         onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
           if (renameNodeKey !== null) return;
@@ -293,7 +339,7 @@ function TreeItem({
         }}
         onContextMenu={(e) => {
           e.preventDefault();
-          onContextMenu(e, node, siblings);
+          onContextMenu(e, node);
         }}
         onDragStart={(e) => {
           e.dataTransfer.effectAllowed = "move";
@@ -396,7 +442,6 @@ function TreeItem({
             <TreeItem
               key={child.key}
               node={child}
-              siblings={node.children}
               {...sharedChildProps}
             />
           ))}
@@ -678,6 +723,106 @@ function RenumberConfirmDialog({
   );
 }
 
+// ── Multi-select toolbar ──────────────────────────────────────────────────────
+
+interface MultiSelectToolbarProps {
+  count: number;
+  onDuplicate: () => void;
+  onCopy: () => void;
+  onExport: () => void;
+  onDelete: () => void;
+  onClear: () => void;
+}
+
+function MultiSelectToolbar({
+  count,
+  onDuplicate,
+  onCopy,
+  onExport,
+  onDelete,
+  onClear,
+}: MultiSelectToolbarProps) {
+  const btn = (label: string, action: () => void, danger = false) => (
+    <button
+      key={label}
+      onClick={action}
+      className={[
+        "rounded px-2 py-0.5 text-[10px] font-medium transition-colors",
+        danger
+          ? "text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40"
+          : "text-[var(--color-text)] hover:bg-[var(--color-border)]",
+      ].join(" ")}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="border-b border-[var(--color-border)] bg-[var(--color-accent)]/5 px-3 py-2">
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-[10px] font-semibold text-[var(--color-accent)]">
+          {count} selected
+        </span>
+        <button
+          onClick={onClear}
+          title="Clear selection"
+          className="flex h-4 w-4 items-center justify-center rounded text-[var(--color-muted)] hover:text-[var(--color-text)]"
+        >
+          <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+            <path d="M1 1l6 6M7 1L1 7" />
+          </svg>
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-1">
+        {btn("Duplicate", onDuplicate)}
+        {btn("Copy MD", onCopy)}
+        {btn("Export", onExport)}
+        {btn("Delete", onDelete, true)}
+      </div>
+    </div>
+  );
+}
+
+// ── Delete-multi confirmation dialog ─────────────────────────────────────────
+
+interface DeleteMultiDialogProps {
+  count: number;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+function DeleteMultiDialog({ count, onConfirm, onCancel }: DeleteMultiDialogProps) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+      onMouseDown={(e) => e.target === e.currentTarget && onCancel()}
+    >
+      <div className="w-80 rounded-xl border border-[var(--color-border)] bg-[var(--color-paper)] p-6 shadow-2xl">
+        <p className="mb-2 text-sm font-semibold text-[var(--color-text)]">
+          Delete {count} section{count !== 1 ? "s" : ""}?
+        </p>
+        <p className="mb-5 text-xs text-[var(--color-muted)]">
+          Each heading and all content below it will be removed. This action can be undone.
+        </p>
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="rounded-md px-3 py-1.5 text-xs text-[var(--color-muted)] hover:bg-[var(--color-border)]"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="rounded-md bg-red-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-600"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Context menu ──────────────────────────────────────────────────────────────
 
 interface ContextMenuProps {
@@ -686,8 +831,12 @@ interface ContextMenuProps {
   onDuplicate: (node: OutlineNode) => void;
   onInsertRequirement?: (node: OutlineNode) => void;
   onDelete: (node: OutlineNode) => void;
-  onMoveUp: (node: OutlineNode, siblings: OutlineNode[]) => void;
-  onMoveDown: (node: OutlineNode, siblings: OutlineNode[]) => void;
+  onMoveUp: (node: OutlineNode) => void;
+  onMoveDown: (node: OutlineNode) => void;
+  onSelectOnly: (ids: Set<string>) => void;
+  onSelectSubtree: (ids: Set<string>) => void;
+  onSelectSiblings: (ids: Set<string>) => void;
+  onSelectChildren: (ids: Set<string>) => void;
   onClose: () => void;
 }
 
@@ -699,12 +848,13 @@ function ContextMenu({
   onDelete,
   onMoveUp,
   onMoveDown,
+  onSelectOnly,
+  onSelectSubtree,
+  onSelectSiblings,
+  onSelectChildren,
   onClose,
 }: ContextMenuProps) {
-  const { node, siblings, x, y } = state;
-  const sibIdx = siblings.indexOf(node);
-  const canMoveUp = sibIdx > 0;
-  const canMoveDown = sibIdx < siblings.length - 1;
+  const { node, canMoveUp, canMoveDown, x, y, subtreeIds, siblingIds, childrenIds } = state;
 
   useEffect(() => {
     const onMouseDown = () => onClose();
@@ -762,8 +912,14 @@ function ContextMenu({
       {onInsertRequirement &&
         item("Insert Requirement After", () => onInsertRequirement(node))}
       <div className="my-1 border-t border-[var(--color-border)]" />
-      {item("Move Up", () => onMoveUp(node, siblings), !canMoveUp)}
-      {item("Move Down", () => onMoveDown(node, siblings), !canMoveDown)}
+      {item("Move Up", () => onMoveUp(node), !canMoveUp)}
+      {item("Move Down", () => onMoveDown(node), !canMoveDown)}
+      <div className="my-1 border-t border-[var(--color-border)]" />
+      {item("Select", () => onSelectOnly(new Set([stableDragId(node)])))}
+      {item("Select Subtree", () => onSelectSubtree(subtreeIds))}
+      {item("Select Siblings", () => onSelectSiblings(siblingIds))}
+      {childrenIds.size > 0 &&
+        item("Select Children", () => onSelectChildren(childrenIds))}
       <div className="my-1 border-t border-[var(--color-border)]" />
       {item("Delete", () => onDelete(node), false, true)}
     </div>
@@ -839,6 +995,12 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
   const [query, setQuery] = useState("");
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const filterInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Selection state ─────────────────────────────────────────────────────────
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const [lastSelectedKey, setLastSelectedKey] = useState<string | null>(null);
+  const [deleteMultiOpen, setDeleteMultiOpen] = useState(false);
+  const panelRef = useRef<HTMLElement>(null);
 
   // ── Drag state ──────────────────────────────────────────────────────────────
   const [dragKey, setDragKey] = useState<string | null>(null);
@@ -928,15 +1090,22 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
   }, [analysis]);
 
   // ── Structural operation helper ─────────────────────────────────────────────
+  // Single PM transaction so every content op is one Cmd+Z step.
   const applyContentOp = useCallback(
     (newContent: JSONContent[]) => {
       if (!editor) return;
-      const savedFrom = editor.state.selection.from;
-      editor.commands.setContent({ type: "doc", content: newContent });
-      const maxPos = editor.state.doc.content.size - 1;
-      if (maxPos >= 0) {
-        editor.commands.setTextSelection(Math.min(savedFrom, maxPos));
-      }
+      const { state } = editor;
+      const savedFrom = state.selection.from;
+      const newDocNode = state.schema.nodeFromJSON({
+        type: "doc",
+        content: newContent,
+      });
+      const tr = state.tr.replaceWith(0, state.doc.content.size, newDocNode.content);
+      const maxPos = Math.max(0, newDocNode.content.size - 1);
+      tr.setSelection(
+        TextSelection.create(tr.doc, Math.min(savedFrom, maxPos))
+      );
+      editor.view.dispatch(tr);
     },
     [editor]
   );
@@ -945,6 +1114,81 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
     (): JSONContent[] => editor?.getJSON().content ?? [],
     [editor]
   );
+
+  // ── Multi-section operations ────────────────────────────────────────────────
+  const resolveSelectedNodes = useCallback((): OutlineNode[] => {
+    if (!editor) return [];
+    const fresh = flattenOutline(deriveOutline(editor));
+    return fresh.filter((n) => selectedKeys.has(stableDragId(n)));
+  }, [editor, selectedKeys]);
+
+  const handleMultiDuplicate = useCallback(() => {
+    const nodes = resolveSelectedNodes();
+    if (nodes.length === 0) return;
+    const content = getDocContent();
+    const ranges = normalizeSelectedRanges(nodes, content);
+    applyContentOp(duplicateMultipleSections(content, ranges));
+  }, [resolveSelectedNodes, getDocContent, applyContentOp]);
+
+  const handleMultiDelete = useCallback(() => {
+    const nodes = resolveSelectedNodes();
+    if (nodes.length === 0) return;
+    const content = getDocContent();
+    const ranges = normalizeSelectedRanges(nodes, content);
+    applyContentOp(deleteMultipleSections(content, ranges));
+    setSelectedKeys(new Set());
+    setDeleteMultiOpen(false);
+  }, [resolveSelectedNodes, getDocContent, applyContentOp]);
+
+  const handleCopyMarkdown = useCallback(async () => {
+    if (!editor) return;
+    const nodes = resolveSelectedNodes();
+    if (nodes.length === 0) return;
+    const content = getDocContent();
+    const ranges = normalizeSelectedRanges(nodes, content);
+    const selectedContent = ranges.flatMap(({ from, to }) =>
+      content.slice(from, to)
+    );
+    try {
+      const markdown = serializeDocToMarkdown({
+        type: "doc",
+        content: selectedContent,
+      });
+      await navigator.clipboard.writeText(markdown);
+      useToastStore.getState().show(
+        `Copied ${ranges.length} section${ranges.length !== 1 ? "s" : ""}`,
+        "success"
+      );
+    } catch {
+      useToastStore.getState().show("Copy failed", "error");
+    }
+  }, [editor, resolveSelectedNodes, getDocContent]);
+
+  const handleExportSelection = useCallback(async () => {
+    if (!editor) return;
+    const nodes = resolveSelectedNodes();
+    if (nodes.length === 0) return;
+    const content = getDocContent();
+    const ranges = normalizeSelectedRanges(nodes, content);
+    const selectedContent = ranges.flatMap(({ from, to }) =>
+      content.slice(from, to)
+    );
+    try {
+      const markdown = serializeDocToMarkdown({
+        type: "doc",
+        content: selectedContent,
+      });
+      const blob = new Blob([markdown], { type: "text/markdown" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `export-${ranges.length}-sections.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      useToastStore.getState().show("Export failed", "error");
+    }
+  }, [editor, resolveSelectedNodes, getDocContent]);
 
   // ── DnD move helper (single undoable PM transaction) ───────────────────────
   // Unlike applyContentOp (two dispatches: setContent + setTextSelection),
@@ -1026,6 +1270,47 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
     [editor]
   );
 
+  // ── Ctrl/Cmd+A: select all visible outline nodes ────────────────────────────
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key !== "a") return;
+      if (!panelRef.current?.contains(document.activeElement)) return;
+      e.preventDefault();
+      setSelectedKeys(new Set(flatOutline.map(stableDragId)));
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [flatOutline]);
+
+  // ── Node click: single / Ctrl / Shift select ───────────────────────────────
+  const handleNodeClick = useCallback(
+    (e: React.MouseEvent, node: OutlineNode) => {
+      const sid = stableDragId(node);
+      if (e.metaKey || e.ctrlKey) {
+        setSelectedKeys((prev) => {
+          const next = new Set(prev);
+          if (next.has(sid)) next.delete(sid);
+          else next.add(sid);
+          return next;
+        });
+        setLastSelectedKey(sid);
+      } else if (e.shiftKey && lastSelectedKey) {
+        const ids = flatOutline.map(stableDragId);
+        const a = ids.indexOf(lastSelectedKey);
+        const b = ids.indexOf(sid);
+        if (a !== -1 && b !== -1) {
+          const [lo, hi] = a <= b ? [a, b] : [b, a];
+          setSelectedKeys(new Set(ids.slice(lo, hi + 1)));
+        }
+      } else {
+        setSelectedKeys(new Set([sid]));
+        setLastSelectedKey(sid);
+        handleSelect(node);
+      }
+    },
+    [lastSelectedKey, flatOutline, handleSelect]
+  );
+
   // ── Collapse / expand ───────────────────────────────────────────────────────
   const toggleCollapsed = useCallback((key: string) => {
     setCollapsedKeys((prev) => {
@@ -1045,23 +1330,52 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
 
   // ── Drag and drop ───────────────────────────────────────────────────────────
   const handleDragStart = useCallback(
-    (node: OutlineNode) => {
+    (staleNode: OutlineNode) => {
+      if (!editor) return;
+      const freshFlat = flattenOutline(deriveOutline(editor));
       const content = getDocContent();
-      const level = node.level ?? 1;
-      const targets = new Set(
-        flatOutline
-          .filter(
-            (n) =>
-              n.level === level &&
-              n.key !== node.key &&
-              !isInsideSection(content, node.index, level, n.index)
-          )
-          .map((n) => n.key)
-      );
-      setDragKey(node.key);
-      setValidDropTargets(targets);
+      const level = staleNode.level ?? 1;
+      const sid = stableDragId(staleNode);
+      const freshSource = freshFlat.find((n) => stableDragId(n) === sid);
+      if (!freshSource) return;
+
+      const isMultiDrag = selectedKeys.has(sid) && selectedKeys.size > 1;
+
+      if (isMultiDrag) {
+        const selectedNodes = freshFlat.filter((n) =>
+          selectedKeys.has(stableDragId(n))
+        );
+        const ranges = normalizeSelectedRanges(selectedNodes, content);
+        // Exclude all selected nodes and anything inside their ranges from targets
+        const targets = new Set(
+          freshFlat
+            .filter((n) => {
+              if (selectedKeys.has(stableDragId(n))) return false;
+              if ((n.level ?? 1) > level) return false;
+              return !ranges.some(
+                (r) => n.index > r.from && n.index < r.to
+              );
+            })
+            .map(stableDragId)
+        );
+        setDragKey(sid);
+        setValidDropTargets(targets);
+      } else {
+        const targets = new Set(
+          freshFlat
+            .filter(
+              (n) =>
+                (n.level ?? 1) <= level &&
+                stableDragId(n) !== sid &&
+                !isInsideSection(content, freshSource.index, level, n.index)
+            )
+            .map(stableDragId)
+        );
+        setDragKey(sid);
+        setValidDropTargets(targets);
+      }
     },
-    [flatOutline, getDocContent]
+    [editor, getDocContent, selectedKeys]
   );
 
   const handleDragOver = useCallback(
@@ -1069,62 +1383,110 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
       const position =
         e.clientY < rect.top + rect.height / 2 ? "before" : "after";
+      const tid = stableDragId(target);
       setDropTarget((prev) =>
-        prev?.key === target.key && prev.position === position
+        prev?.key === tid && prev.position === position
           ? prev
-          : { key: target.key, position }
+          : { key: tid, position }
       );
     },
     []
   );
 
   const handleDrop = useCallback(
-    (target: OutlineNode) => {
-      if (!dragKey || !dropTarget) return;
+    (staleTarget: OutlineNode) => {
+      if (!editor || !dragKey || !dropTarget) return;
+      const freshFlat = flattenOutline(deriveOutline(editor));
       const content = getDocContent();
-      const source = flatOutline.find((n) => n.key === dragKey);
-      if (!source) return;
+      const freshTarget = freshFlat.find(
+        (n) => stableDragId(n) === stableDragId(staleTarget)
+      );
+      if (!freshTarget) return;
 
-      const sourceLevel = source.level ?? 1;
-      const [sFrom, sTo] = getSectionRange(content, source.index, sourceLevel);
-      const sLen = sTo - sFrom;
+      const isMultiDrop = selectedKeys.has(dragKey) && selectedKeys.size > 1;
 
-      let newContent: JSONContent[];
-      let insertedAtIndex: number;
-
-      if (dropTarget.position === "before") {
-        newContent = moveSectionBefore(
-          content,
-          source.index,
-          sourceLevel,
-          target.index
+      if (isMultiDrop) {
+        const selectedNodes = freshFlat.filter((n) =>
+          selectedKeys.has(stableDragId(n))
         );
-        // Mirror moveSectionBefore's insertAt arithmetic
-        insertedAtIndex =
-          target.index > sFrom ? target.index - sLen : target.index;
+        const ranges = normalizeSelectedRanges(selectedNodes, content);
+        if (ranges.length === 0) return;
+        // Reject drop if target is inside a selected section
+        if (ranges.some((r) => freshTarget.index >= r.from && freshTarget.index < r.to)) return;
+
+        const sourceLevel =
+          freshFlat.find((n) => stableDragId(n) === dragKey)?.level ?? 1;
+        const targetLevel = freshTarget.level ?? 1;
+
+        // Adjust target index for removals
+        let adjustedTarget = freshTarget.index;
+        for (const { from, to } of [...ranges].reverse()) {
+          if (freshTarget.index >= to) adjustedTarget -= to - from;
+          else if (freshTarget.index > from) { setDragKey(null); setValidDropTargets(new Set()); setDropTarget(null); return; }
+        }
+
+        // Build remaining content
+        let remaining = [...content];
+        for (const { from, to } of [...ranges].reverse()) {
+          remaining = [...remaining.slice(0, from), ...remaining.slice(to)];
+        }
+
+        // Compute insert position in remaining
+        let insertAt: number;
+        if (dropTarget.position === "before") {
+          insertAt = adjustedTarget;
+        } else if (sourceLevel > targetLevel) {
+          insertAt = adjustedTarget + 1;
+        } else {
+          const [, tTo] = getSectionRange(remaining, adjustedTarget, targetLevel);
+          insertAt = tTo;
+        }
+
+        const selectedContent = ranges.flatMap(({ from, to }) =>
+          content.slice(from, to)
+        );
+        const newContent = [
+          ...remaining.slice(0, insertAt),
+          ...selectedContent,
+          ...remaining.slice(insertAt),
+        ];
+        applyContentOp(newContent);
       } else {
-        const [, tTo] = getSectionRange(
-          content,
-          target.index,
-          target.level ?? 1
-        );
-        newContent = moveSectionAfter(
-          content,
-          source.index,
-          sourceLevel,
-          target.index,
-          target.level ?? 1
-        );
-        // Mirror moveSectionAfter's insertAt arithmetic
-        insertedAtIndex = tTo > sFrom ? tTo - sLen : tTo;
+        // Single-node drop
+        const source = freshFlat.find((n) => stableDragId(n) === dragKey);
+        if (!source) return;
+
+        const sourceLevel = source.level ?? 1;
+        const targetLevel = freshTarget.level ?? 1;
+        const [sFrom, sTo] = getSectionRange(content, source.index, sourceLevel);
+        const sLen = sTo - sFrom;
+
+        let newContent: JSONContent[];
+        let insertedAtIndex: number;
+
+        if (sourceLevel === targetLevel) {
+          if (dropTarget.position === "before") {
+            newContent = moveSectionBefore(content, source.index, sourceLevel, freshTarget.index);
+            insertedAtIndex = freshTarget.index > sFrom ? freshTarget.index - sLen : freshTarget.index;
+          } else {
+            const [, tTo] = getSectionRange(content, freshTarget.index, targetLevel);
+            newContent = moveSectionAfter(content, source.index, sourceLevel, freshTarget.index, targetLevel);
+            insertedAtIndex = tTo > sFrom ? tTo - sLen : tTo;
+          }
+        } else {
+          const insertPos = dropTarget.position === "after" ? freshTarget.index + 1 : freshTarget.index;
+          newContent = moveSectionBefore(content, source.index, sourceLevel, insertPos);
+          insertedAtIndex = insertPos > sFrom ? insertPos - sLen : insertPos;
+        }
+
+        applyMoveOp(newContent, sFrom, sTo, insertedAtIndex);
       }
 
-      applyMoveOp(newContent, sFrom, sTo, insertedAtIndex);
       setDragKey(null);
       setValidDropTargets(new Set());
       setDropTarget(null);
     },
-    [dragKey, dropTarget, flatOutline, getDocContent, applyMoveOp]
+    [editor, dragKey, dropTarget, getDocContent, applyMoveOp, applyContentOp, selectedKeys]
   );
 
   const handleDragEnd = useCallback(() => {
@@ -1134,11 +1496,47 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
   }, []);
 
   // ── Context menu ────────────────────────────────────────────────────────────
+  // Always re-derive from editor.state here (not from `flatOutline` React state)
+  // because outline state is debounced 150 ms. A previous move/rename shifts PM
+  // offsets immediately; if the user right-clicks again before the debounce fires
+  // the React-state node has a stale key AND stale index. We match by label
+  // (heading text is unchanged by moves) to find the fresh node with correct index.
   const handleContextMenu = useCallback(
-    (e: React.MouseEvent, node: OutlineNode, siblings: OutlineNode[]) => {
-      setContextMenu({ node, siblings, x: e.clientX, y: e.clientY });
+    (e: React.MouseEvent, staleNode: OutlineNode) => {
+      if (!editor) return;
+      const freshTree = deriveOutline(editor);
+      const freshFlat = flattenOutline(freshTree);
+      const level = staleNode.level ?? 1;
+      const sameLevelInOrder = freshFlat.filter((n) => n.level === level);
+      const idx = sameLevelInOrder.findIndex((n) => n.label === staleNode.label);
+      const freshNode = idx >= 0 ? sameLevelInOrder[idx] : staleNode;
+
+      // Pre-compute selection key sets for Select Subtree / Siblings / Children
+      const freshSid = stableDragId(freshNode);
+      const treeNode = findNodeInTree(freshTree, freshSid);
+      const subtreeNodes = treeNode ? flattenOutline([treeNode]) : [freshNode];
+      const subtreeIds = new Set(subtreeNodes.map(stableDragId));
+
+      const parent = findParentInTree(freshTree, freshSid);
+      const siblings = parent ? parent.children : freshTree;
+      const siblingIds = new Set(siblings.map(stableDragId));
+
+      const childrenIds = new Set(
+        (treeNode?.children ?? []).map(stableDragId)
+      );
+
+      setContextMenu({
+        node: freshNode,
+        canMoveUp: idx > 0,
+        canMoveDown: idx >= 0 && idx < sameLevelInOrder.length - 1,
+        x: e.clientX,
+        y: e.clientY,
+        subtreeIds,
+        siblingIds,
+        childrenIds,
+      });
     },
-    []
+    [editor]
   );
 
   // ── Context menu actions ────────────────────────────────────────────────────
@@ -1194,33 +1592,39 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
   }, [deleteNode, applyContentOp, getDocContent]);
 
   const handleMoveUp = useCallback(
-    (node: OutlineNode, siblings: OutlineNode[]) => {
-      const idx = siblings.indexOf(node);
+    (node: OutlineNode) => {
+      if (!editor) return;
+      // Re-derive fresh at click time. node.key is fresh (set by handleContextMenu
+      // from a fresh derivation), so findIndex by key is reliable here.
+      const freshFlat = flattenOutline(deriveOutline(editor));
+      const level = node.level ?? 1;
+      const sameLevelInOrder = freshFlat.filter((n) => n.level === level);
+      const idx = sameLevelInOrder.findIndex((n) => n.key === node.key);
       if (idx <= 0) return;
-      const prev = siblings[idx - 1];
+      const freshNode = sameLevelInOrder[idx];
+      const prev = sameLevelInOrder[idx - 1];
       applyContentOp(
-        moveSectionBefore(getDocContent(), node.index, node.level ?? 1, prev.index)
+        moveSectionBefore(getDocContent(), freshNode.index, level, prev.index)
       );
     },
-    [applyContentOp, getDocContent]
+    [editor, applyContentOp, getDocContent]
   );
 
   const handleMoveDown = useCallback(
-    (node: OutlineNode, siblings: OutlineNode[]) => {
-      const idx = siblings.indexOf(node);
-      if (idx < 0 || idx >= siblings.length - 1) return;
-      const next = siblings[idx + 1];
+    (node: OutlineNode) => {
+      if (!editor) return;
+      const freshFlat = flattenOutline(deriveOutline(editor));
+      const level = node.level ?? 1;
+      const sameLevelInOrder = freshFlat.filter((n) => n.level === level);
+      const idx = sameLevelInOrder.findIndex((n) => n.key === node.key);
+      if (idx < 0 || idx >= sameLevelInOrder.length - 1) return;
+      const freshNode = sameLevelInOrder[idx];
+      const next = sameLevelInOrder[idx + 1];
       applyContentOp(
-        moveSectionAfter(
-          getDocContent(),
-          node.index,
-          node.level ?? 1,
-          next.index,
-          next.level ?? 1
-        )
+        moveSectionAfter(getDocContent(), freshNode.index, level, next.index, level)
       );
     },
-    [applyContentOp, getDocContent]
+    [editor, applyContentOp, getDocContent]
   );
 
   // ── Pattern config ──────────────────────────────────────────────────────────
@@ -1320,7 +1724,9 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
   return (
     <>
       <aside
-        className="flex shrink-0 flex-col overflow-hidden border-r border-[var(--color-border)] bg-[var(--color-paper)]"
+        ref={panelRef}
+        tabIndex={-1}
+        className="flex shrink-0 flex-col overflow-hidden border-r border-[var(--color-border)] bg-[var(--color-paper)] outline-none"
         style={{ width }}
         aria-label="Document outline"
       >
@@ -1451,6 +1857,18 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
           </div>
         </div>
 
+        {/* ── Multi-select toolbar ── */}
+        {selectedKeys.size > 1 && (
+          <MultiSelectToolbar
+            count={selectedKeys.size}
+            onDuplicate={handleMultiDuplicate}
+            onCopy={handleCopyMarkdown}
+            onExport={handleExportSelection}
+            onDelete={() => setDeleteMultiOpen(true)}
+            onClear={() => { setSelectedKeys(new Set()); setLastSelectedKey(null); }}
+          />
+        )}
+
         {/* ── Issue summary ── */}
         {hasIssues && (
           <IssueSummaryStrip
@@ -1488,11 +1906,11 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
                 <TreeItem
                   key={node.key}
                   node={node}
-                  siblings={outline}
                   depth={0}
                   activeKey={activeKey}
                   collapsedKeys={collapsedKeys}
                   searchState={searchState}
+                  selectedKeys={selectedKeys}
                   dragKey={dragKey}
                   validDropTargets={validDropTargets}
                   dropTarget={dropTarget}
@@ -1501,6 +1919,7 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
                   duplicateNodeKeys={duplicateNodeKeys}
                   renameNodeKey={renameNode?.key ?? null}
                   renameValue={renameValue}
+                  onNodeClick={handleNodeClick}
                   onSelect={handleSelect}
                   onRename={handleRename}
                   onToggle={toggleCollapsed}
@@ -1531,6 +1950,10 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
           onDelete={handleDelete}
           onMoveUp={handleMoveUp}
           onMoveDown={handleMoveDown}
+          onSelectOnly={(ids) => { setSelectedKeys(ids); setLastSelectedKey([...ids][0] ?? null); }}
+          onSelectSubtree={(ids) => { setSelectedKeys(ids); }}
+          onSelectSiblings={(ids) => { setSelectedKeys(ids); }}
+          onSelectChildren={(ids) => { setSelectedKeys(ids); }}
           onClose={() => setContextMenu(null)}
         />
       )}
@@ -1541,6 +1964,15 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
           node={deleteNode}
           onConfirm={handleDeleteConfirm}
           onCancel={() => setDeleteNode(null)}
+        />
+      )}
+
+      {/* Multi-delete confirmation */}
+      {deleteMultiOpen && (
+        <DeleteMultiDialog
+          count={selectedKeys.size}
+          onConfirm={handleMultiDelete}
+          onCancel={() => setDeleteMultiOpen(false)}
         />
       )}
 

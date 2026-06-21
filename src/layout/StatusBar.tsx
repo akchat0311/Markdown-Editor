@@ -17,6 +17,7 @@ export function StatusBar() {
   const sourceMode = useUIStore((s) => s.sourceMode);
   const toggleSourceMode = useUIStore((s) => s.toggleSourceMode);
   const isDirty = useTabStore((s) => getActiveTab(s)?.isDirty ?? false);
+  const isReadOnly = useTabStore((s) => getActiveTab(s)?.isReadOnly ?? false);
 
   const stats = useEditorState({
     editor,
@@ -45,7 +46,11 @@ export function StatusBar() {
       <span>{readingTime(words)}</span>
 
       <div className="ml-auto flex items-center gap-2">
-        {isDirty ? (
+        {isReadOnly ? (
+          <span className="rounded-sm bg-[var(--color-border)] px-1.5 py-px text-[9px] font-medium">
+            Sample Document
+          </span>
+        ) : isDirty ? (
           <span className="flex items-center gap-1">
             <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
             Unsaved Changes

@@ -12,6 +12,8 @@ export interface TabData {
   lastSavedAt: number | null;
   fileName?: string;
   fileHandle?: FileSystemFileHandle;
+  /** True for template/sample documents — never dirty, never saved to disk. */
+  isReadOnly?: boolean;
 }
 
 interface TabActions {
@@ -32,48 +34,21 @@ interface TabState {
 
 export type TabStore = TabState & TabActions;
 
-export const INITIAL_MARKDOWN = `# Welcome
-
-Start writing in **Markdown**. Type \`/\` on a new line to insert blocks.
-
-> [!INFO]
->
-> This is an info callout. Try \`/callout\` to add one.
-
-## Features
-
-- WYSIWYG editing — Markdown stays in sync behind the scenes
-- Tables, code blocks, task lists, callouts
-- Multiple document tabs
-- Open / save Markdown files
-- Light and dark themes
-
-## Code
-
-\`\`\`javascript
-function greet(name) {
-  return \`Hello, \${name}!\`;
-}
-\`\`\`
-
-| Column A | Column B |
-| - | - |
-| Cell 1   | Cell 2   |
-| Cell 3   | Cell 4   |
-`;
-
-function makeInitialTab(): TabData {
+// Placeholder shown while public/templates/welcome.md is being fetched.
+// App.tsx replaces the content as soon as the fetch resolves.
+function makeWelcomeTab(): TabData {
   return {
     id: makeId(),
     title: "Welcome",
-    markdown: INITIAL_MARKDOWN,
+    markdown: "",
     isDirty: false,
     lastSavedAt: null,
+    isReadOnly: true,
   };
 }
 
 export const useTabStore = create<TabStore>()((set, get) => {
-  const initial = makeInitialTab();
+  const initial = makeWelcomeTab();
   return {
     tabs: [initial],
     activeTabId: initial.id,

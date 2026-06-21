@@ -1,0 +1,22 @@
+{
+  "statuses": [
+    {
+      "id": "draft",
+      "label": "Draft",
+      "order": 1,
+      "aliases": ["Draft", "draft", "DRAFT"]
+    },
+    {
+      "id": "review",
+      "label": "Review",
+      "order": 2,
+      "aliases": ["Review", "review", "REVIEW", "In Review", "in review", "IN REVIEW"]
+    },
+    {
+      "id": "approved",
+      "label": "Approved",
+      "order": 3,
+      "aliases": ["Approved", "approved", "APPROVED"]
+    }
+  ]
+}

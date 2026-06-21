@@ -166,6 +166,7 @@ export interface HeaderProps {
   onOpenRecent: (r: RecentFile) => void;
   onExportMarkdown?: () => void;
   onSearch?: () => void;
+  onRequirements?: () => void;
 }
 
 export function Header({
@@ -177,6 +178,7 @@ export function Header({
   onOpenRecent,
   onExportMarkdown,
   onSearch,
+  onRequirements,
 }: HeaderProps) {
   const [exportOpen, setExportOpen] = useState(false);
   const { theme, toggleTheme, sidebarOpen, toggleSidebar } = useUIStore();
@@ -254,6 +256,21 @@ export function Header({
         <span>Search</span>
         <kbd className="rounded bg-[var(--color-border)] px-1 font-mono text-[10px]">⌘K</kbd>
       </button>
+
+      {onRequirements && (
+        <button
+          className="flex h-7 shrink-0 items-center gap-2 rounded border border-[var(--color-border)] px-2 text-xs text-[var(--color-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors"
+          onClick={onRequirements}
+          title="Requirements Index (⌘⇧R)"
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+            <rect x="2" y="2" width="12" height="12" rx="1.5" />
+            <path d="M5 5.5h6M5 8h6M5 10.5h4" />
+          </svg>
+          <span>Requirements</span>
+          <kbd className="rounded bg-[var(--color-border)] px-1 font-mono text-[10px]">⌘⇧R</kbd>
+        </button>
+      )}
 
       <div className="mx-1 h-5 w-px bg-[var(--color-border)]" />
 
