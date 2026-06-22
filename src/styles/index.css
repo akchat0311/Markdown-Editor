@@ -459,7 +459,27 @@ body {
 .ProseMirror a {
   color: var(--color-accent);
   text-decoration: underline;
-  cursor: pointer;
+  cursor: text;
+}
+
+/* ── Link navigation tooltip ─────────────────────────────────────────────── */
+
+.link-nav-tooltip {
+  position: fixed;
+  z-index: 9999;
+  background: rgba(15, 15, 20, 0.88);
+  color: #e6e8eb;
+  font-size: 11.5px;
+  line-height: 1.5;
+  padding: 5px 9px;
+  border-radius: 5px;
+  white-space: pre;
+  pointer-events: none;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  font-family: ui-monospace, monospace;
 }
 
 ::selection {

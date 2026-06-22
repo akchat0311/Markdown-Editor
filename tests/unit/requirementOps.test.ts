@@ -7,6 +7,7 @@ import {
   insertRequirementAfter,
   renumberRequirements,
   reassignRequirementId,
+  computeRenumberReplacements,
   type RequirementEntry,
 } from "@/editor/utils/requirementOps";
 import type { OutlineNode } from "@/types/outline";
@@ -497,6 +498,131 @@ describe("renumberRequirements", () => {
 
 // ── reassignRequirementId ─────────────────────────────────────────────────────
 
+// ── computeRenumberReplacements ───────────────────────────────────────────────
+// Pure function: computes (pmPos, newLabel) pairs for a PM-transaction renumber.
+// Works for both top-level and blockquoted headings because it uses pmPos, not
+// content-array index.
+
+describe("computeRenumberReplacements", () => {
+  it("assigns sequential labels starting at 001, in document order", () => {
+    const reqs: RequirementEntry[] = [
+      { node: { ...makeNode("REQ_003", 0), pmPos: 0  }, id: "REQ_003", num: 3 },
+      { node: { ...makeNode("REQ_001", 1), pmPos: 20 }, id: "REQ_001", num: 1 },
+      { node: { ...makeNode("REQ_002", 2), pmPos: 40 }, id: "REQ_002", num: 2 },
+    ];
+    const result = computeRenumberReplacements(reqs, "REQ_", 3);
+    expect(result[0].newLabel).toBe("REQ_001");
+    expect(result[1].newLabel).toBe("REQ_002");
+    expect(result[2].newLabel).toBe("REQ_003");
+  });
+
+  it("preserves title suffix after the ID", () => {
+    const reqs: RequirementEntry[] = [
+      { node: { ...makeNode("REQ_003 - Auth flow", 0), pmPos: 0 }, id: "REQ_003", num: 3 },
+    ];
+    const result = computeRenumberReplacements(reqs, "REQ_", 3);
+    expect(result[0].newLabel).toBe("REQ_001 - Auth flow");
+  });
+
+  it("preserves status bracket suffix", () => {
+    const reqs: RequirementEntry[] = [
+      { node: { ...makeNode("REQ_002 [Draft]", 0), pmPos: 5 }, id: "REQ_002", num: 2 },
+      { node: { ...makeNode("REQ_004 [Approved]", 1), pmPos: 25 }, id: "REQ_004", num: 4 },
+    ];
+    const result = computeRenumberReplacements(reqs, "REQ_", 3);
+    expect(result[0].newLabel).toBe("REQ_001 [Draft]");
+    expect(result[1].newLabel).toBe("REQ_002 [Approved]");
+  });
+
+  it("carries the correct pmPos for each replacement", () => {
+    const reqs: RequirementEntry[] = [
+      { node: { ...makeNode("REQ_001", 0), pmPos: 10 }, id: "REQ_001", num: 1 },
+      { node: { ...makeNode("REQ_002", 1), pmPos: 30 }, id: "REQ_002", num: 2 },
+    ];
+    const result = computeRenumberReplacements(reqs, "REQ_", 3);
+    expect(result[0].pmPos).toBe(10);
+    expect(result[1].pmPos).toBe(30);
+  });
+
+  it("treats top-level and blockquoted headings identically (uses pmPos only)", () => {
+    const topNode = { ...makeNode("REQ_002 [Draft]", 0), pmPos: 10 };
+    const quotedNode = { ...makeNode("REQ_003 [Review]", 1), pmPos: 50, readonly: true as const };
+    const reqs: RequirementEntry[] = [
+      { node: topNode,    id: "REQ_002", num: 2 },
+      { node: quotedNode, id: "REQ_003", num: 3 },
+    ];
+    const result = computeRenumberReplacements(reqs, "REQ_", 3);
+    // Both get the same treatment: sequential labels, correct pmPos
+    expect(result[0].newLabel).toBe("REQ_001 [Draft]");
+    expect(result[1].newLabel).toBe("REQ_002 [Review]");
+    expect(result[0].pmPos).toBe(10);
+    expect(result[1].pmPos).toBe(50);
+  });
+
+  it("mixed document: top-level, blockquoted, top-level — all renumbered", () => {
+    const reqs: RequirementEntry[] = [
+      { node: { ...makeNode("REQ_001 [Draft]",    0), pmPos: 5  },               id: "REQ_001", num: 1 },
+      { node: { ...makeNode("REQ_002 [Review]",   1), pmPos: 20, readonly: true as const }, id: "REQ_002", num: 2 },
+      { node: { ...makeNode("REQ_003 [Approved]", 2), pmPos: 40 },               id: "REQ_003", num: 3 },
+    ];
+    const result = computeRenumberReplacements(reqs, "REQ_", 3);
+    expect(result.map(r => r.newLabel)).toEqual([
+      "REQ_001 [Draft]",
+      "REQ_002 [Review]",
+      "REQ_003 [Approved]",
+    ]);
+    expect(result.map(r => r.pmPos)).toEqual([5, 20, 40]);
+  });
+
+  it("normalises digit width when original used fewer digits", () => {
+    const reqs: RequirementEntry[] = [
+      { node: { ...makeNode("REQ_01 [Draft]", 0), pmPos: 0 }, id: "REQ_01", num: 1 },
+    ];
+    const result = computeRenumberReplacements(reqs, "REQ_", 3);
+    expect(result[0].newLabel).toBe("REQ_001 [Draft]");
+  });
+
+  it("returns empty array for empty requirements", () => {
+    expect(computeRenumberReplacements([], "REQ_", 3)).toEqual([]);
+  });
+});
+
+describe("renumberRequirements — blockquote containers", () => {
+  it("skips entries whose node.index points to a non-heading (blockquote container)", () => {
+    // Three requirements: REQ_001 (top-level), REQ_002 (blockquote), REQ_003 (top-level).
+    // node.index 1 is a blockquote, so REQ_002 must be skipped.
+    const docContent: import("@tiptap/core").JSONContent[] = [
+      { type: "heading", attrs: { level: 3 }, content: [{ type: "text", text: "REQ_003" }] },
+      { type: "blockquote", content: [{ type: "heading", attrs: { level: 3 }, content: [{ type: "text", text: "REQ_001" }] }] },
+      { type: "heading", attrs: { level: 3 }, content: [{ type: "text", text: "REQ_002" }] },
+    ];
+    const entries: RequirementEntry[] = [
+      { node: { ...makeNode("REQ_003", 0, 3), index: 0 }, id: "REQ_003", num: 3 },
+      { node: { ...makeNode("REQ_001", 1, 3), index: 1, readonly: true as const }, id: "REQ_001", num: 1 },
+      { node: { ...makeNode("REQ_002", 2, 3), index: 2 }, id: "REQ_002", num: 2 },
+    ];
+    const result = renumberRequirements(docContent, entries, "REQ_", 3);
+    // Index 0 (heading) → counter=1 → REQ_001
+    expect(result[0].content![0].text).toBe("REQ_001");
+    // Index 1 (blockquote) → skipped, counter=2
+    expect(result[1].type).toBe("blockquote");
+    // Index 2 (heading) → counter=3 → REQ_003
+    expect(result[2].content![0].text).toBe("REQ_003");
+  });
+
+  it("does not corrupt blockquote content when skipping", () => {
+    const docContent: import("@tiptap/core").JSONContent[] = [
+      { type: "blockquote", content: [{ type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "REQ_001" }] }] },
+    ];
+    const entries: RequirementEntry[] = [
+      { node: { ...makeNode("REQ_001", 0, 2), index: 0, readonly: true as const }, id: "REQ_001", num: 1 },
+    ];
+    const result = renumberRequirements(docContent, entries, "REQ_", 3);
+    expect(result[0].type).toBe("blockquote");
+    expect(result[0].content![0].content![0].text).toBe("REQ_001");
+  });
+});
+
 describe("reassignRequirementId", () => {
   it("replaces the ID and preserves the title suffix", () => {
     const content = makeContent([
@@ -544,5 +670,15 @@ describe("reassignRequirementId", () => {
     const content = makeContent([{ level: 2, text: "REQ_001" }]);
     reassignRequirementId(content, 0, "REQ_001", "REQ_001", "REQ_999");
     expect(content[0].content![0].text).toBe("REQ_001");
+  });
+
+  it("returns content unchanged when nodeIndex points to a non-heading container", () => {
+    const content: import("@tiptap/core").JSONContent[] = [
+      { type: "blockquote", content: [{ type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "REQ_001" }] }] },
+    ];
+    const result = reassignRequirementId(content, 0, "REQ_001", "REQ_001", "REQ_005");
+    // Blockquote container must be unchanged
+    expect(result).toBe(content); // same reference (no copy made)
+    expect(result[0].type).toBe("blockquote");
   });
 });

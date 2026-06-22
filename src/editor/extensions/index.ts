@@ -16,6 +16,7 @@ import { Superscript } from "./Superscript";
 import { Subscript } from "./Subscript";
 import { TableAlignment } from "./TableAlignment";
 import { RequirementStatus } from "./RequirementStatus";
+import { LinkNavigation } from "./LinkNavigation";
 import { findReplacePlugin } from "@/editor/plugins/findReplace";
 
 const FindReplaceExtension = Extension.create({
@@ -52,5 +53,6 @@ export function createEditorExtensions(): Extensions {
     CustomKeymap,
     FindReplaceExtension,
     RequirementStatus,
+    LinkNavigation,
   ];
 }

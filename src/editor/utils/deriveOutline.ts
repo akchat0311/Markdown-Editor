@@ -5,14 +5,16 @@ import type { OutlineNode } from "@/types/outline";
 /**
  * Derives a heading-only outline tree from the live Tiptap editor.
  *
- * Uses doc.forEach() (direct children only, which is where headings always live)
- * to capture two distinct positions per node:
- *   pmPos  — ProseMirror absolute offset, used for setTextSelection / scrollIntoView
- *   index  — 0-based index in doc.content[], used for structural operations
- *            (moveSectionBefore, deleteSection, etc.)
+ * Uses doc.forEach() (direct children) as the primary scan, and recurses one
+ * level into blockquote / callout nodes to find headings inside them.
  *
- * Intentionally heading-only. For static JSON-based extraction that also covers
- * tables and images, use extractOutline() instead.
+ * Two distinct positions per node:
+ *   pmPos  — ProseMirror absolute offset of the heading, used for navigation
+ *   index  — 0-based index in doc.content[] of the heading or its container,
+ *            used for structural ops (moveSectionBefore, deleteSection, etc.)
+ *
+ * Headings inside containers are marked readonly: true — structural edits
+ * (rename, delete, move) are not available for them.
  */
 export function deriveOutline(editor: Editor | null): OutlineNode[] {
   if (!editor) return [];
@@ -20,27 +22,42 @@ export function deriveOutline(editor: Editor | null): OutlineNode[] {
   const roots: OutlineNode[] = [];
   const stack: OutlineNode[] = [];
 
-  editor.state.doc.forEach((node: PMNode, offset: number, index: number) => {
-    if (node.type.name !== "heading") return;
-
+  function pushHeading(
+    node: PMNode,
+    pmPos: number,
+    topLevelIndex: number,
+    readonly?: true,
+  ) {
     const level = (node.attrs.level as number) ?? 1;
-    const label = node.textContent || "Untitled";
-
     const outlineNode: OutlineNode = {
-      key: `heading:${offset}`,
+      key: `heading:${pmPos}`,
       type: "heading",
       level,
-      label,
-      pmPos: offset,
-      index,
+      label: node.textContent || "Untitled",
+      pmPos,
+      index: topLevelIndex,
       children: [],
+      ...(readonly ? { readonly } : {}),
     };
-
     while (stack.length && (stack[stack.length - 1].level ?? 0) >= level) {
       stack.pop();
     }
     (stack.length ? stack[stack.length - 1].children : roots).push(outlineNode);
     stack.push(outlineNode);
+  }
+
+  editor.state.doc.forEach((node: PMNode, offset: number, index: number) => {
+    if (node.type.name === "heading") {
+      pushHeading(node, offset, index);
+    } else if (node.type.name === "blockquote" || node.type.name === "callout") {
+      // One level deep: find headings directly inside blockquotes / callouts.
+      node.forEach((child: PMNode, childOffset: number) => {
+        if (child.type.name === "heading") {
+          // offset + 1: skip the container's opening token to get the child's absolute pos
+          pushHeading(child, offset + 1 + childOffset, index, true);
+        }
+      });
+    }
   });
 
   return roots;

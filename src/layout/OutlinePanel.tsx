@@ -35,8 +35,7 @@ import {
   analyzeRequirements,
   nextAvailableId,
   insertRequirementAfter,
-  renumberRequirements,
-  reassignRequirementId,
+  computeRenumberReplacements,
   type DerivedPattern,
   type RequirementAnalysis,
 } from "@/editor/utils/requirementOps";
@@ -315,7 +314,7 @@ function TreeItem({
       <div
         role="button"
         tabIndex={0}
-        draggable={searchState === null && !isRenaming}
+        draggable={searchState === null && !isRenaming && !node.readonly}
         className={[
           "group flex cursor-pointer select-none items-center gap-1 rounded-sm py-[3px] pr-2 text-xs leading-5 outline-none",
           "hover:bg-[var(--color-border)]",
@@ -329,7 +328,7 @@ function TreeItem({
             : {}),
         }}
         onClick={(e) => { if (renameNodeKey === null) onNodeClick(e, node); }}
-        onDoubleClick={(e) => { e.stopPropagation(); if (renameNodeKey === null) onRename(node); }}
+        onDoubleClick={(e) => { e.stopPropagation(); if (renameNodeKey === null && !node.readonly) onRename(node); }}
         onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
           if (renameNodeKey !== null) return;
           if (e.key === "Enter" || e.key === " ") {
@@ -695,14 +694,8 @@ function RenumberConfirmDialog({
           </code>{" "}
           with {digits}-digit formatting.
         </p>
-        <p className="mb-4 text-xs text-[var(--color-muted)]">
-          Duplicate IDs and gaps will be resolved.
-        </p>
-        <p className="mb-5 flex items-center gap-1.5 text-[10px] text-amber-500">
-          <svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor">
-            <path d="M6 1 .5 11h11L6 1zm0 2 4 7H2L6 3zM5.5 5v2h1V5h-1zm0 3v1h1V8h-1z" />
-          </svg>
-          This replaces undo history.
+        <p className="mb-5 text-xs text-[var(--color-muted)]">
+          Duplicate IDs and gaps will be resolved. This can be undone with Cmd+Z.
         </p>
         <div className="flex justify-end gap-2">
           <button
@@ -855,6 +848,7 @@ function ContextMenu({
   onClose,
 }: ContextMenuProps) {
   const { node, canMoveUp, canMoveDown, x, y, subtreeIds, siblingIds, childrenIds } = state;
+  const isReadonly = node.readonly === true;
 
   useEffect(() => {
     const onMouseDown = () => onClose();
@@ -907,13 +901,13 @@ function ContextMenu({
       style={{ left: safeX, top: safeY }}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      {item("Rename", () => onRename(node))}
-      {item("Duplicate", () => onDuplicate(node))}
+      {item("Rename", () => onRename(node), isReadonly)}
+      {item("Duplicate", () => onDuplicate(node), isReadonly)}
       {onInsertRequirement &&
-        item("Insert Requirement After", () => onInsertRequirement(node))}
+        item("Insert Requirement After", () => onInsertRequirement(node), isReadonly)}
       <div className="my-1 border-t border-[var(--color-border)]" />
-      {item("Move Up", () => onMoveUp(node), !canMoveUp)}
-      {item("Move Down", () => onMoveDown(node), !canMoveDown)}
+      {item("Move Up", () => onMoveUp(node), !canMoveUp || isReadonly)}
+      {item("Move Down", () => onMoveDown(node), !canMoveDown || isReadonly)}
       <div className="my-1 border-t border-[var(--color-border)]" />
       {item("Select", () => onSelectOnly(new Set([stableDragId(node)])))}
       {item("Select Subtree", () => onSelectSubtree(subtreeIds))}
@@ -921,7 +915,7 @@ function ContextMenu({
       {childrenIds.size > 0 &&
         item("Select Children", () => onSelectChildren(childrenIds))}
       <div className="my-1 border-t border-[var(--color-border)]" />
-      {item("Delete", () => onDelete(node), false, true)}
+      {item("Delete", () => onDelete(node), isReadonly, true)}
     </div>
   );
 }
@@ -1331,7 +1325,7 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
   // ── Drag and drop ───────────────────────────────────────────────────────────
   const handleDragStart = useCallback(
     (staleNode: OutlineNode) => {
-      if (!editor) return;
+      if (!editor || staleNode.readonly) return;
       const freshFlat = flattenOutline(deriveOutline(editor));
       const content = getDocContent();
       const level = staleNode.level ?? 1;
@@ -1546,6 +1540,7 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
   const renameHandledRef = useRef(false);
 
   const handleRename = useCallback((node: OutlineNode) => {
+    if (node.readonly) return;
     renameHandledRef.current = false;
     setRenameNode(node);
     setRenameValue(node.label);
@@ -1572,6 +1567,7 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
 
   const handleDuplicate = useCallback(
     (node: OutlineNode) => {
+      if (node.readonly) return;
       applyContentOp(
         duplicateSection(getDocContent(), node.index, node.level ?? 1)
       );
@@ -1580,6 +1576,7 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
   );
 
   const handleDelete = useCallback((node: OutlineNode) => {
+    if (node.readonly) return;
     setDeleteNode(node);
   }, []);
 
@@ -1593,7 +1590,7 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
 
   const handleMoveUp = useCallback(
     (node: OutlineNode) => {
-      if (!editor) return;
+      if (!editor || node.readonly) return;
       // Re-derive fresh at click time. node.key is fresh (set by handleContextMenu
       // from a fresh derivation), so findIndex by key is reliable here.
       const freshFlat = flattenOutline(deriveOutline(editor));
@@ -1612,7 +1609,7 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
 
   const handleMoveDown = useCallback(
     (node: OutlineNode) => {
-      if (!editor) return;
+      if (!editor || node.readonly) return;
       const freshFlat = flattenOutline(deriveOutline(editor));
       const level = node.level ?? 1;
       const sameLevelInOrder = freshFlat.filter((n) => n.level === level);
@@ -1658,7 +1655,7 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
 
   const handleInsertRequirement = useCallback(
     (node: OutlineNode) => {
-      if (!editor || !derivedPattern || !analysis) return;
+      if (!editor || !derivedPattern || !analysis || node.readonly) return;
       const { prefix, digits } = derivedPattern;
       const newId = nextAvailableId(analysis.requirements, prefix, digits);
       const content = getDocContent();
@@ -1688,31 +1685,46 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
   );
 
   const handleRenumber = useCallback(() => {
-    if (!derivedPattern || !analysis) return;
+    if (!editor || !derivedPattern || !analysis) return;
     const { prefix, digits } = derivedPattern;
-    applyContentOp(
-      renumberRequirements(getDocContent(), analysis.requirements, prefix, digits)
-    );
+    const replacements = computeRenumberReplacements(analysis.requirements, prefix, digits);
+
+    const { state } = editor;
+    let tr = state.tr;
+
+    // Apply in reverse document order (highest pmPos first) so that each
+    // replacement doesn't shift the absolute positions used by subsequent steps.
+    for (const { pmPos, newLabel } of [...replacements].reverse()) {
+      const node = state.doc.nodeAt(pmPos);
+      if (!node || node.type.name !== "heading") continue;
+      const textFrom = pmPos + 1;
+      const textTo = textFrom + node.textContent.length;
+      tr = tr.replaceWith(textFrom, textTo, state.schema.text(newLabel));
+    }
+
+    editor.view.dispatch(tr);
     setRenumberConfirmOpen(false);
-  }, [derivedPattern, analysis, applyContentOp, getDocContent]);
+  }, [editor, derivedPattern, analysis]);
 
   const handleReassignDuplicate = useCallback(
     (id: string, nodes: OutlineNode[]) => {
-      if (!derivedPattern || !analysis) return;
+      if (!editor || !derivedPattern || !analysis) return;
       const { prefix, digits } = derivedPattern;
       const target = nodes[nodes.length - 1]; // last occurrence by document order
       const newId = nextAvailableId(analysis.requirements, prefix, digits);
-      applyContentOp(
-        reassignRequirementId(
-          getDocContent(),
-          target.index,
-          target.label,
-          id,
-          newId
-        )
+      const suffix = target.label.slice(id.length);
+      const newLabel = newId + suffix;
+
+      const { state } = editor;
+      const node = state.doc.nodeAt(target.pmPos);
+      if (!node || node.type.name !== "heading") return;
+      const textFrom = target.pmPos + 1;
+      const textTo = textFrom + node.textContent.length;
+      editor.view.dispatch(
+        state.tr.replaceWith(textFrom, textTo, state.schema.text(newLabel))
       );
     },
-    [derivedPattern, analysis, applyContentOp, getDocContent]
+    [editor, derivedPattern, analysis]
   );
 
   // ── Render ──────────────────────────────────────────────────────────────────

@@ -277,6 +277,42 @@ export function buildRequirementIndex(
   return { total: requirements.length, statusCounts, requirements };
 }
 
+// ── PM-aware renumber helpers ─────────────────────────────────────────────────
+
+export interface RenumberReplacement {
+  /** Absolute PM position of the heading node (same as entry.node.pmPos). */
+  pmPos: number;
+  /** Full heading text after renumbering: newId + original suffix. */
+  newLabel: string;
+  entry: RequirementEntry;
+}
+
+/**
+ * Computes the label replacements required to renumber requirements sequentially,
+ * without mutating any document state.
+ *
+ * Uses document-order index position (1, 2, 3…) — NOT the existing numeric
+ * suffix — so gaps and duplicates are both resolved in a single pass.
+ *
+ * Each result carries the heading's absolute `pmPos` so callers can build a
+ * ProseMirror transaction that works for both top-level headings and headings
+ * nested inside blockquotes/callouts (where content-array indexing fails).
+ *
+ * Apply results in **reverse document order** (highest pmPos first) inside a
+ * single transaction so that position offsets stay valid throughout.
+ */
+export function computeRenumberReplacements(
+  requirements: RequirementEntry[],
+  prefix: string,
+  digits: number,
+): RenumberReplacement[] {
+  return requirements.map((entry, i) => {
+    const newId = formatId(i + 1, prefix, digits);
+    const suffix = entry.node.label.slice(entry.id.length);
+    return { pmPos: entry.node.pmPos, newLabel: newId + suffix, entry };
+  });
+}
+
 // ── Mutation helpers ──────────────────────────────────────────────────────────
 
 /**
@@ -329,13 +365,20 @@ export function renumberRequirements(
   digits: number
 ): JSONContent[] {
   const newContent = [...content];
-  requirements.forEach((entry, i) => {
-    const newId = formatId(i + 1, prefix, digits);
+  let counter = 1;
+  requirements.forEach((entry) => {
+    // Requirements inside containers (blockquote/callout) have node.index pointing
+    // to the container, not a heading. Skip them to avoid corrupting the document;
+    // still increment counter so numbering of editable siblings stays sequential.
+    if (content[entry.node.index]?.type !== "heading") {
+      counter++;
+      return;
+    }
+    const newId = formatId(counter++, prefix, digits);
     const suffix = entry.node.label.slice(entry.id.length); // preserve title after ID
-    const newLabel = newId + suffix;
     newContent[entry.node.index] = {
       ...newContent[entry.node.index],
-      content: [{ type: "text", text: newLabel }],
+      content: [{ type: "text", text: newId + suffix }],
     };
   });
   return newContent;
@@ -356,6 +399,9 @@ export function reassignRequirementId(
   oldId: string,
   newId: string
 ): JSONContent[] {
+  // Guard: nodeIndex may point to a container (blockquote/callout) rather than a
+  // heading when the requirement lives inside one. Bail out to avoid corruption.
+  if (content[nodeIndex]?.type !== "heading") return content;
   const suffix = currentLabel.slice(oldId.length);
   return renameHeading(content, nodeIndex, newId + suffix);
 }

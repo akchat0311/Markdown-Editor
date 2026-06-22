@@ -240,17 +240,14 @@ function buildDecorations(state: EditorState): DecorationSet {
   const { from: selFrom, to: selTo } = state.selection;
   const decorations: Decoration[] = [];
 
-  // Scan only top-level children (same as deriveOutline — headings are always top-level).
-  state.doc.forEach((node, offset) => {
-    if (node.type.name !== "heading") return;
-
-    const range = findStatusRange(node, offset, regex, statuses);
+  // Process a heading node at the given absolute PM position.
+  function processHeading(node: import("@tiptap/pm/model").Node, nodePos: number) {
+    const range = findStatusRange(node, nodePos, regex, statuses);
     if (!range) return;
 
     const { bracketFrom, bracketTo } = range;
 
     if (bracketTo !== null) {
-      // Known or unknown status: hide text / show widget, unless cursor is inside.
       const cursorInside = selFrom >= bracketFrom && selTo <= bracketTo;
       if (cursorInside) {
         decorations.push(
@@ -269,14 +266,26 @@ function buildDecorations(state: EditorState): DecorationSet {
         );
       }
     } else {
-      // Missing status: show widget at end of heading, no text to hide.
       decorations.push(
         Decoration.widget(
           bracketFrom,
           createDropdownWidget(range, statuses),
-          { side: 1, key: `rs-missing-${offset}`, stopEvent: () => true }
+          { side: 1, key: `rs-missing-${nodePos}`, stopEvent: () => true }
         )
       );
+    }
+  }
+
+  // Scan top-level children and one level inside blockquotes / callouts.
+  state.doc.forEach((node, offset) => {
+    if (node.type.name === "heading") {
+      processHeading(node, offset);
+    } else if (node.type.name === "blockquote" || node.type.name === "callout") {
+      node.forEach((child, childOffset) => {
+        if (child.type.name === "heading") {
+          processHeading(child, offset + 1 + childOffset);
+        }
+      });
     }
   });
 

@@ -278,3 +278,76 @@ describe("buildRequirementIndex — empty document", () => {
     expect(idx!.statusCounts.unknown).toBe(0);
   });
 });
+
+// ── buildRequirementIndex — blockquoted requirements ─────────────────────────
+// Requirements inside blockquotes are marked readonly: true on their OutlineNode
+// (index points to the container). Detection should be parent-agnostic.
+
+describe("buildRequirementIndex — blockquoted requirements", () => {
+  function makeReadonlyNode(label: string, level: number, pmPos = keyCounter * 10): OutlineNode {
+    keyCounter++;
+    return {
+      key: `heading:${pmPos}`,
+      type: "heading",
+      level,
+      label,
+      pmPos,
+      index: keyCounter, // container's top-level index
+      children: [],
+      readonly: true,
+    };
+  }
+
+  it("detects a blockquoted requirement (readonly: true) the same as a top-level one", () => {
+    const flat = [
+      makeNode("Brake Monitoring", 2),
+      makeReadonlyNode("REQ_001 [Draft]", 3),
+    ];
+    const idx = buildRequirementIndex(flat, "REQ_001", DEFAULT_STATUSES);
+    expect(idx!.total).toBe(1);
+    expect(idx!.requirements[0].id).toBe("REQ_001");
+    expect(idx!.requirements[0].status).toBe("draft");
+    expect(idx!.requirements[0].section).toBe("Brake Monitoring");
+  });
+
+  it("produces identical results for top-level and blockquoted variants", () => {
+    const topLevel = [
+      makeNode("System", 2),
+      makeNode("REQ_001 [Approved]", 3),
+    ];
+    const quoted = [
+      makeNode("System", 2),
+      makeReadonlyNode("REQ_001 [Approved]", 3),
+    ];
+    const idx1 = buildRequirementIndex(topLevel, "REQ_001", DEFAULT_STATUSES);
+    const idx2 = buildRequirementIndex(quoted, "REQ_001", DEFAULT_STATUSES);
+    expect(idx1!.total).toBe(idx2!.total);
+    expect(idx1!.requirements[0].id).toBe(idx2!.requirements[0].id);
+    expect(idx1!.requirements[0].status).toBe(idx2!.requirements[0].status);
+    expect(idx1!.requirements[0].section).toBe(idx2!.requirements[0].section);
+  });
+
+  it("handles a mix of blockquoted and top-level requirements", () => {
+    const flat = [
+      makeNode("Auth", 2),
+      makeNode("REQ_001 [Draft]", 3),
+      makeReadonlyNode("REQ_002 [Review]", 3),
+      makeNode("Reporting", 2),
+      makeReadonlyNode("REQ_003 [Approved]", 3),
+    ];
+    const idx = buildRequirementIndex(flat, "REQ_001", DEFAULT_STATUSES);
+    expect(idx!.total).toBe(3);
+    expect(idx!.requirements[0].section).toBe("Auth");
+    expect(idx!.requirements[1].section).toBe("Auth");
+    expect(idx!.requirements[2].section).toBe("Reporting");
+    expect(idx!.statusCounts.draft).toBe(1);
+    expect(idx!.statusCounts.review).toBe(1);
+    expect(idx!.statusCounts.approved).toBe(1);
+  });
+
+  it("uses pmPos for navigation (not affected by readonly)", () => {
+    const flat = [makeReadonlyNode("REQ_001 [Draft]", 3, 42)];
+    const idx = buildRequirementIndex(flat, "REQ_001", DEFAULT_STATUSES);
+    expect(idx!.requirements[0].pmPos).toBe(42);
+  });
+});
