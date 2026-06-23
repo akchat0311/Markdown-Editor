@@ -16,6 +16,7 @@ import { Superscript } from "./Superscript";
 import { Subscript } from "./Subscript";
 import { TableAlignment } from "./TableAlignment";
 import { RequirementStatus } from "./RequirementStatus";
+import { ReviewCommentBadge } from "./ReviewCommentBadge";
 import { LinkNavigation } from "./LinkNavigation";
 import { findReplacePlugin } from "@/editor/plugins/findReplace";
 
@@ -53,6 +54,7 @@ export function createEditorExtensions(): Extensions {
     CustomKeymap,
     FindReplaceExtension,
     RequirementStatus,
+    ReviewCommentBadge,
     LinkNavigation,
   ];
 }

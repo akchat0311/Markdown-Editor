@@ -20,30 +20,42 @@ export function slugify(text: string): string {
 
 /**
  * Walks a PM document and returns the absolute position of the first heading
- * whose slugified text matches `slug`.  Checks one level inside blockquotes
- * and callouts to match the rest of the codebase's traversal pattern.
+ * matching `slug` in two-priority order (single pass):
+ *
+ *   1. Exact GFM slug: slugify(heading.textContent) === slug
+ *      → handles regular headings like #brake-monitoring
+ *
+ *   2. Bracket-stripped slug: slugify(heading text without trailing [Status]) === slug
+ *      → handles requirement headings like #req_015 → "REQ_015 [Draft]"
+ *
+ * Exact matches take priority over stripped matches in document order.
+ * Checks one level inside blockquotes and callouts.
  * Returns null when no matching heading exists.
  */
 export function findHeadingBySlug(doc: PMNode, slug: string): number | null {
-  let found: number | null = null;
+  let exact: number | null = null;
+  let stripped: number | null = null;
+
+  function check(node: PMNode, pos: number): void {
+    if (node.type.name !== "heading") return;
+    if (exact === null && slugify(node.textContent) === slug) {
+      exact = pos;
+      return; // exact match; skip stripped check for this node
+    }
+    if (stripped === null) {
+      const bare = node.textContent.replace(/\s*\[[^\]]*\]\s*$/, "").trim();
+      if (slugify(bare) === slug) stripped = pos;
+    }
+  }
 
   doc.forEach((node, offset) => {
-    if (found !== null) return;
-    if (node.type.name === "heading" && slugify(node.textContent) === slug) {
-      found = offset;
-      return;
-    }
+    check(node, offset);
     if (node.type.name === "blockquote" || node.type.name === "callout") {
-      node.forEach((child, childOffset) => {
-        if (found !== null) return;
-        if (child.type.name === "heading" && slugify(child.textContent) === slug) {
-          found = offset + 1 + childOffset;
-        }
-      });
+      node.forEach((child, childOffset) => check(child, offset + 1 + childOffset));
     }
   });
 
-  return found;
+  return exact ?? stripped;
 }
 
 function resolveAnchor(
@@ -79,32 +91,79 @@ export const LinkNavigation = Extension.create({
         key: linkNavKey,
 
         props: {
-          handleClick(view: EditorView, _pos: number, event: MouseEvent) {
-            if (event.button !== 0) return false;
-            if (!event.metaKey && !event.ctrlKey) return false;
+          handleDOMEvents: {
+            // Intercept before PM's mousedown handler creates a LeftMouseDown
+            // tracker.  Returning true skips PM's handler entirely → no cursor
+            // placement on mouseup for modifier+link clicks.
+            mousedown(view: EditorView, rawEvent: Event) {
+              const e = rawEvent as MouseEvent;
+              console.log("[LinkNav] mousedown", {
+                button: e.button,
+                metaKey: e.metaKey,
+                ctrlKey: e.ctrlKey,
+                target: (e.target as Element)?.tagName,
+              });
+              if (e.button !== 0 || (!e.metaKey && !e.ctrlKey)) return false;
+              const anchor = resolveAnchor(e.target, view.dom);
+              console.log("[LinkNav] mousedown anchor:", anchor?.getAttribute("href"));
+              if (!anchor?.getAttribute("href")) return false;
+              // Skip PM's LeftMouseDown creation → no cursor placement on mouseup
+              return true;
+            },
 
-            const anchor = resolveAnchor(event.target, view.dom);
-            if (!anchor) return false;
+            // Perform navigation on click (fires after mousedown+mouseup, after
+            // returning true from mousedown above, PM has no LeftMouseDown so
+            // it does not place a cursor on mouseup).
+            // Using click (not mousedown) so window.open is treated as a
+            // direct user gesture and is not blocked by popup blockers.
+            click(view: EditorView, rawEvent: Event) {
+              const e = rawEvent as MouseEvent;
+              console.log("[LinkNav] click", {
+                button: e.button,
+                metaKey: e.metaKey,
+                ctrlKey: e.ctrlKey,
+                target: (e.target as Element)?.tagName,
+              });
+              if (e.button !== 0 || (!e.metaKey && !e.ctrlKey)) return false;
 
-            const href = anchor.getAttribute("href");
-            if (!href) return false;
+              const anchor = resolveAnchor(e.target, view.dom);
+              const href = anchor?.getAttribute("href") ?? null;
+              console.log("[LinkNav] click href:", href);
+              if (!anchor || !href) return false;
 
-            event.preventDefault();
-            event.stopPropagation();
+              e.preventDefault();
 
-            if (href.startsWith("#")) {
-              const pos = findHeadingBySlug(view.state.doc, href.slice(1));
-              if (pos !== null) {
-                const resolved = view.state.doc.resolve(pos + 1);
-                const sel = TextSelection.near(resolved);
-                view.dispatch(view.state.tr.setSelection(sel).scrollIntoView());
-                view.focus();
+              if (href.startsWith("#")) {
+                const slug = href.slice(1);
+                const pos = findHeadingBySlug(view.state.doc, slug);
+                console.log("[LinkNav] internal nav slug=", slug, "pos=", pos);
+                if (pos !== null) {
+                  const resolved = view.state.doc.resolve(pos + 1);
+                  const sel = TextSelection.near(resolved);
+                  view.dispatch(view.state.tr.setSelection(sel).scrollIntoView());
+                  view.focus();
+                }
+              } else {
+                window.open(href, "_blank", "noopener,noreferrer");
               }
-            } else {
-              window.open(href, "_blank", "noopener,noreferrer");
-            }
 
-            return true;
+              return true;
+            },
+          },
+
+          // Diagnostic: log every handleClick invocation to verify whether PM
+          // calls it at all (it fires from mouseup inside LeftMouseDown.up()).
+          // This should NOT fire for modifier+link clicks because handleDOMEvents
+          // .mousedown consumed the event and PM never created a LeftMouseDown.
+          handleClick(_view: EditorView, _pos: number, event: MouseEvent) {
+            if (event.metaKey || event.ctrlKey) {
+              console.log("[LinkNav] handleClick (PM mouseup path) — should not fire for modifier+link clicks", {
+                metaKey: event.metaKey,
+                ctrlKey: event.ctrlKey,
+                target: (event.target as Element)?.tagName,
+              });
+            }
+            return false;
           },
         },
 

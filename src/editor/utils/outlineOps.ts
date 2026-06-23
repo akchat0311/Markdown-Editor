@@ -10,13 +10,82 @@ import type { OutlineNode } from "@/types/outline";
  * same or higher structural level, or until end of array).
  */
 
-// ── Core helper ───────────────────────────────────────────────────────────────
+// ── Status reset helper ───────────────────────────────────────────────────────
+
+/**
+ * Replaces the trailing [Status] bracket in a heading's text nodes with [Draft].
+ * Only operates on a `type: "heading"` JSON node.
+ */
+function resetHeadingNodeStatusToDraft(heading: JSONContent): JSONContent {
+  const nodes = heading.content as JSONContent[] | undefined;
+  if (!nodes?.length) return heading;
+  const updated = [...nodes];
+  for (let i = updated.length - 1; i >= 0; i--) {
+    const n = updated[i];
+    if (typeof n.text === "string" && /\[[^\]]+\]\s*$/.test(n.text)) {
+      updated[i] = { ...n, text: n.text.replace(/\[[^\]]+\]\s*$/, "[Draft]") };
+      return { ...heading, content: updated };
+    }
+  }
+  return heading;
+}
+
+/**
+ * Resets the [Status] bracket on a section root to [Draft].
+ * Handles both a plain heading and a blockquote/callout containing a heading.
+ */
+function resetHeadingStatusToDraft(block: JSONContent): JSONContent {
+  if (block.type === "heading") return resetHeadingNodeStatusToDraft(block);
+  if ((block.type === "blockquote" || block.type === "callout") && Array.isArray(block.content)) {
+    let found = false;
+    const inner = (block.content as JSONContent[]).map((child) => {
+      if (!found && child.type === "heading") { found = true; return resetHeadingNodeStatusToDraft(child); }
+      return child;
+    });
+    return { ...block, content: inner };
+  }
+  return block;
+}
+
+/**
+ * Inserts " Copy" into the heading text immediately before its trailing
+ * [Draft] bracket, or appends it at the end if no bracket is present.
+ * Only operates on a `type: "heading"` JSON node.
+ */
+function insertCopyInHeadingNode(heading: JSONContent): JSONContent {
+  const nodes = [...((heading.content ?? []) as JSONContent[])];
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const n = nodes[i];
+    if (typeof n.text === "string" && n.text.endsWith("[Draft]")) {
+      nodes[i] = { ...n, text: n.text.slice(0, -7) + "Copy [Draft]" };
+      return { ...heading, content: nodes };
+    }
+  }
+  const last = nodes[nodes.length - 1];
+  if (last?.type === "text") {
+    nodes[nodes.length - 1] = { ...last, text: (last.text ?? "") + " Copy" };
+  } else {
+    nodes.push({ type: "text", text: " Copy" });
+  }
+  return { ...heading, content: nodes };
+}
+
+// ── Core helpers ──────────────────────────────────────────────────────────────
 
 /**
  * Returns [from, to) indices delimiting the section that starts at nodeIndex.
- * `level` is the heading level of the section's root heading.
+ *
+ * Handles two patterns for the section root:
+ *   - Regular heading:  content[nodeIndex].type === "heading"
+ *   - Container node:   content[nodeIndex].type === "blockquote" | "callout"
+ *                       that holds a heading inside it (requirement pattern:
+ *                       `> ### REQ_001 [Draft]` with body paragraphs outside)
+ *
+ * A section ends at the first subsequent block that is either:
+ *   (a) a top-level heading at level <= `level`, or
+ *   (b) a blockquote/callout whose first heading child is at level <= `level`.
  */
-export function getSectionRange(
+export function getNodeSectionRange(
   content: JSONContent[],
   nodeIndex: number,
   level: number
@@ -25,12 +94,28 @@ export function getSectionRange(
   while (to < content.length) {
     const block = content[to];
     if (block.type === "heading") {
-      const blockLevel = (block.attrs?.level as number) ?? 1;
-      if (blockLevel <= level) break;
+      if (((block.attrs?.level as number) ?? 1) <= level) break;
+    } else if (block.type === "blockquote" || block.type === "callout") {
+      const inner = block.content?.find(
+        (c) => c.type === "heading" && ((c.attrs?.level as number) ?? 1) <= level
+      );
+      if (inner) break;
     }
     to++;
   }
   return [nodeIndex, to];
+}
+
+/**
+ * Returns [from, to) for a section rooted at a top-level heading.
+ * Kept for backward compatibility; prefer getNodeSectionRange for new callers.
+ */
+export function getSectionRange(
+  content: JSONContent[],
+  nodeIndex: number,
+  level: number
+): [number, number] {
+  return getNodeSectionRange(content, nodeIndex, level);
 }
 
 // ── Movement ──────────────────────────────────────────────────────────────────
@@ -47,7 +132,7 @@ export function moveSectionBefore(
   sourceLevel: number,
   targetIdx: number
 ): JSONContent[] {
-  const [sFrom, sTo] = getSectionRange(content, sourceIdx, sourceLevel);
+  const [sFrom, sTo] = getNodeSectionRange(content, sourceIdx, sourceLevel);
   const section = content.slice(sFrom, sTo);
   const without = [...content.slice(0, sFrom), ...content.slice(sTo)];
   // If targetIdx is after the removed section, it shifts left by (sTo - sFrom)
@@ -68,8 +153,8 @@ export function moveSectionAfter(
   targetIdx: number,
   targetLevel: number
 ): JSONContent[] {
-  const [sFrom, sTo] = getSectionRange(content, sourceIdx, sourceLevel);
-  const [, tTo] = getSectionRange(content, targetIdx, targetLevel);
+  const [sFrom, sTo] = getNodeSectionRange(content, sourceIdx, sourceLevel);
+  const [, tTo] = getNodeSectionRange(content, targetIdx, targetLevel);
   const section = content.slice(sFrom, sTo);
   const without = [...content.slice(0, sFrom), ...content.slice(sTo)];
   // Adjust insert point: if target end was after the removed source, it shifts
@@ -87,9 +172,12 @@ export function duplicateSection(
   nodeIndex: number,
   level: number
 ): JSONContent[] {
-  const [, to] = getSectionRange(content, nodeIndex, level);
+  const [, to] = getNodeSectionRange(content, nodeIndex, level);
   const original = content.slice(nodeIndex, to);
   const clone = JSON.parse(JSON.stringify(original)) as JSONContent[];
+  if (clone[0]?.type === "heading" && Array.isArray(clone[0].content)) {
+    clone[0] = resetHeadingStatusToDraft(clone[0]);
+  }
   return [...content.slice(0, to), ...clone, ...content.slice(to)];
 }
 
@@ -104,7 +192,7 @@ export function deleteSection(
   nodeIndex: number,
   level: number
 ): JSONContent[] {
-  const [from, to] = getSectionRange(content, nodeIndex, level);
+  const [from, to] = getNodeSectionRange(content, nodeIndex, level);
   const result = [...content.slice(0, from), ...content.slice(to)];
   return result.length > 0 ? result : [{ type: "paragraph" }];
 }
@@ -127,7 +215,7 @@ export function isInsideSection(
   sectionLevel: number,
   candidateIndex: number
 ): boolean {
-  const [from, to] = getSectionRange(content, sectionNodeIndex, sectionLevel);
+  const [from, to] = getNodeSectionRange(content, sectionNodeIndex, sectionLevel);
   return candidateIndex > from && candidateIndex < to;
 }
 
@@ -142,13 +230,22 @@ export function renameHeading(
   nodeIndex: number,
   newLabel: string
 ): JSONContent[] {
+  const trimmed = newLabel.trim();
+  const textContent = trimmed ? [{ type: "text", text: trimmed }] : [];
   return content.map((block, i) => {
     if (i !== nodeIndex) return block;
-    const trimmed = newLabel.trim();
-    return {
-      ...block,
-      content: trimmed ? [{ type: "text", text: trimmed }] : [],
-    };
+    if (block.type === "blockquote" || block.type === "callout") {
+      let found = false;
+      const inner = (block.content ?? []).map((child: JSONContent) => {
+        if (!found && child.type === "heading") {
+          found = true;
+          return { ...child, content: textContent };
+        }
+        return child;
+      });
+      return { ...block, content: inner };
+    }
+    return { ...block, content: textContent };
   });
 }
 
@@ -170,7 +267,7 @@ export function normalizeSelectedRanges(
   content: JSONContent[]
 ): SectionRange[] {
   const withRanges: SectionRange[] = nodes.map((node) => {
-    const [from, to] = getSectionRange(content, node.index, node.level ?? 1);
+    const [from, to] = getNodeSectionRange(content, node.index, node.level ?? 1);
     return { node, from, to };
   });
   withRanges.sort((a, b) => a.from - b.from);
@@ -214,15 +311,23 @@ export function duplicateMultipleSections(
     const section = JSON.parse(
       JSON.stringify(content.slice(from, to))
     ) as JSONContent[];
-    const heading = section[0];
-    if (heading?.type === "heading" && Array.isArray(heading.content)) {
-      const last = heading.content[heading.content.length - 1];
-      if (last?.type === "text") {
-        last.text = (last.text ?? "") + " Copy";
-      } else {
-        heading.content.push({ type: "text", text: " Copy" });
-      }
+    const root = section[0];
+    if (!root) return section;
+
+    if (root.type === "heading" && Array.isArray(root.content)) {
+      section[0] = insertCopyInHeadingNode(resetHeadingNodeStatusToDraft(root));
+    } else if ((root.type === "blockquote" || root.type === "callout") && Array.isArray(root.content)) {
+      let found = false;
+      const inner = (root.content as JSONContent[]).map((child) => {
+        if (!found && child.type === "heading") {
+          found = true;
+          return insertCopyInHeadingNode(resetHeadingNodeStatusToDraft(child));
+        }
+        return child;
+      });
+      section[0] = { ...root, content: inner };
     }
+
     return section;
   });
   return [

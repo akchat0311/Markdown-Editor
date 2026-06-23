@@ -396,7 +396,7 @@ describe("insertRequirementAfter", () => {
     expect(result).toHaveLength(3);
     // REQ_003 appears between REQ_001 and REQ_002
     expect(result[0].content![0].text).toBe("REQ_001");
-    expect(result[1].content![0].text).toBe("REQ_003");
+    expect(result[1].content![0].text).toBe("REQ_003 [Draft]");
     expect(result[2].content![0].text).toBe("REQ_002");
   });
 
@@ -410,7 +410,7 @@ describe("insertRequirementAfter", () => {
     // Insert after H1 "Auth" (section = [0, 3)) → insert at index 3
     const result = insertRequirementAfter(content, 0, 1, "NEW");
     expect(result).toHaveLength(5);
-    expect(result[3].content![0].text).toBe("NEW");
+    expect(result[3].content![0].text).toBe("NEW [Draft]");
     expect(result[4].content![0].text).toBe("Reporting");
   });
 
@@ -419,7 +419,7 @@ describe("insertRequirementAfter", () => {
     const result = insertRequirementAfter(content, 0, 2, "REQ_002");
     expect(result[1].type).toBe("heading");
     expect(result[1].attrs!.level).toBe(2);
-    expect(result[1].content![0].text).toBe("REQ_002");
+    expect(result[1].content![0].text).toBe("REQ_002 [Draft]");
   });
 
   it("does not mutate the input content array", () => {
@@ -514,6 +514,28 @@ describe("computeRenumberReplacements", () => {
     expect(result[0].newLabel).toBe("REQ_001");
     expect(result[1].newLabel).toBe("REQ_002");
     expect(result[2].newLabel).toBe("REQ_003");
+    // newId is the bare ID string; callers use this to replace ONLY the prefix
+    // so that status-bracket marks ([*Draft*]) are never touched
+    expect(result[0].newId).toBe("REQ_001");
+    expect(result[1].newId).toBe("REQ_002");
+    expect(result[2].newId).toBe("REQ_003");
+  });
+
+  it("newId does not include the suffix — callers replace prefix only", () => {
+    const reqs: RequirementEntry[] = [
+      { node: { ...makeNode("REQ_005 [Draft]", 0), pmPos: 0 }, id: "REQ_005", num: 5 },
+      { node: { ...makeNode("REQ_007 [Approved]", 1), pmPos: 20 }, id: "REQ_007", num: 7 },
+    ];
+    const result = computeRenumberReplacements(reqs, "REQ_", 3);
+    // newId is just the bare replacement ID — no suffix
+    expect(result[0].newId).toBe("REQ_001");
+    expect(result[1].newId).toBe("REQ_002");
+    // newLabel still includes the full text (suffix preserved) for reference
+    expect(result[0].newLabel).toBe("REQ_001 [Draft]");
+    expect(result[1].newLabel).toBe("REQ_002 [Approved]");
+    // The ID length in entry.id lets callers know how many chars to replace
+    expect(result[0].entry.id).toBe("REQ_005");
+    expect(result[0].entry.id.length).toBe(7);
   });
 
   it("preserves title suffix after the ID", () => {

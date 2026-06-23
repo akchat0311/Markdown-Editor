@@ -7,15 +7,21 @@
       "aliases": ["Draft", "draft", "DRAFT"]
     },
     {
-      "id": "review",
-      "label": "Review",
+      "id": "ready",
+      "label": "Ready for review",
       "order": 2,
-      "aliases": ["Review", "review", "REVIEW", "In Review", "in review", "IN REVIEW"]
+      "aliases": ["Ready for review", "Ready For Review", "READY FOR REVIEW", "ready for review", "Ready"]
+    },
+    {
+      "id": "in-review",
+      "label": "In Review",
+      "order": 3,
+      "aliases": ["In Review", "in review", "IN REVIEW", "Review", "review", "REVIEW"]
     },
     {
       "id": "approved",
       "label": "Approved",
-      "order": 3,
+      "order": 4,
       "aliases": ["Approved", "approved", "APPROVED"]
     }
   ]

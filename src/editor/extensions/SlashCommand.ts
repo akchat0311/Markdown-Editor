@@ -33,8 +33,24 @@ function createSlashCommandRenderer() {
     if (!container) return;
     const rect = latestProps?.clientRect?.();
     if (!rect) return;
-    container.style.left = `${rect.left + window.scrollX}px`;
-    container.style.top = `${rect.bottom + window.scrollY + 4}px`;
+
+    const GAP = 4;
+    const MENU_MAX_HEIGHT = 320; // matches max-h-80 on SlashCommandMenu
+    const MENU_WIDTH = 288;      // matches w-72 on SlashCommandMenu
+
+    // Clamp left so the menu doesn't overflow the right edge of the viewport.
+    const left = Math.min(rect.left, window.innerWidth - MENU_WIDTH - GAP);
+    container.style.left = `${Math.max(0, left)}px`;
+
+    // Flip upward when there isn't enough space below the caret.
+    const spaceBelow = window.innerHeight - rect.bottom - GAP;
+    if (spaceBelow >= MENU_MAX_HEIGHT || spaceBelow >= rect.top - GAP) {
+      container.style.top = `${rect.bottom + GAP}px`;
+      container.style.bottom = "auto";
+    } else {
+      container.style.top = "auto";
+      container.style.bottom = `${window.innerHeight - rect.top + GAP}px`;
+    }
   };
 
   return {
@@ -42,7 +58,7 @@ function createSlashCommandRenderer() {
       latestProps = props;
       selectedIndex = 0;
       container = document.createElement("div");
-      container.style.position = "absolute";
+      container.style.position = "fixed";
       container.style.zIndex = "50";
       document.body.appendChild(container);
       root = createRoot(container);

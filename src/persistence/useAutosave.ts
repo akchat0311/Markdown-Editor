@@ -22,7 +22,12 @@ export function useAutosave() {
       },
       fileName: tab.fileName,
     });
-    useTabStore.getState().markTabSaved();
+    // Only clear isDirty for tabs that have no disk file. If a fileHandle
+    // exists the user must ⌘S to write back to disk — autosave to IndexedDB
+    // is just crash recovery, not the authoritative save.
+    if (!tab.fileHandle) {
+      useTabStore.getState().markTabSaved();
+    }
   }, []);
 
   useEffect(() => {

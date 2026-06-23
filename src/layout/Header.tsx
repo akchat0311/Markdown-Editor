@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useUIStore, useTabStore, getActiveTab } from "@/stores";
+import { useUserSettingsStore } from "@/stores/userSettingsStore";
 import { getRecentFiles } from "@/persistence/recentFiles";
 import type { RecentFile } from "@/persistence/recentFiles";
 
@@ -43,17 +44,21 @@ function IconSun() {
 interface FileMenuProps {
   onNewFile: () => void;
   onOpen: () => void;
+  onOpenFolder?: () => void;
   onSave: () => void;
   onSaveAs: () => void;
   onCloseTab: () => void;
   onOpenRecent: (r: RecentFile) => void;
+  onChangeUserName: () => void;
+  onExportMarkdown?: () => void;
+  onExportReviewsCsv?: () => void;
 }
 
 function Separator() {
   return <div className="my-1 h-px bg-[var(--color-border)]" />;
 }
 
-function FileMenu({ onNewFile, onOpen, onSave, onSaveAs, onCloseTab, onOpenRecent }: FileMenuProps) {
+function FileMenu({ onNewFile, onOpen, onOpenFolder, onSave, onSaveAs, onCloseTab, onOpenRecent, onChangeUserName, onExportMarkdown, onExportReviewsCsv }: FileMenuProps) {
   const [open, setOpen] = useState(false);
   const [recentFiles, setRecentFiles] = useState<RecentFile[]>([]);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -72,6 +77,8 @@ function FileMenu({ onNewFile, onOpen, onSave, onSaveAs, onCloseTab, onOpenRecen
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
+
+  const { configured, userName } = useUserSettingsStore();
 
   const item = (
     label: string,
@@ -94,7 +101,7 @@ function FileMenu({ onNewFile, onOpen, onSave, onSaveAs, onCloseTab, onOpenRecen
       ].join(" ")}
     >
       <span>{label}</span>
-      <kbd className="font-mono text-[10px] text-[var(--color-muted)]">{shortcut}</kbd>
+      {shortcut && <kbd className="font-mono text-[10px] text-[var(--color-muted)]">{shortcut}</kbd>}
     </button>
   );
 
@@ -124,9 +131,13 @@ function FileMenu({ onNewFile, onOpen, onSave, onSaveAs, onCloseTab, onOpenRecen
         >
           {item("New File", "⌘N", onNewFile)}
           {item("Open File…", "⌘O", onOpen)}
+          {onOpenFolder && item("Open Folder…", "⌘⇧O", onOpenFolder)}
           <Separator />
           {item("Save", "⌘S", onSave)}
           {item("Save As…", "⇧⌘S", onSaveAs)}
+          <Separator />
+          {item("Export Markdown…", "", () => onExportMarkdown?.())}
+          {item("Export Reviews CSV…", "", () => onExportReviewsCsv?.())}
           {recentFiles.length > 0 && (
             <>
               <Separator />
@@ -148,6 +159,14 @@ function FileMenu({ onNewFile, onOpen, onSave, onSaveAs, onCloseTab, onOpenRecen
             </>
           )}
           <Separator />
+          {item(
+            configured
+              ? `User Name: ${userName.length > 14 ? userName.slice(0, 14) + "…" : userName}`
+              : "Set User Name…",
+            "",
+            onChangeUserName,
+          )}
+          <Separator />
           {item("Close Tab", "⌘W", onCloseTab, tabCount <= 1)}
         </div>
       )}
@@ -160,11 +179,14 @@ function FileMenu({ onNewFile, onOpen, onSave, onSaveAs, onCloseTab, onOpenRecen
 export interface HeaderProps {
   onNewFile: () => void;
   onOpen: () => void;
+  onOpenFolder?: () => void;
   onSave: () => void;
   onSaveAs: () => void;
   onCloseTab: () => void;
   onOpenRecent: (r: RecentFile) => void;
+  onChangeUserName: () => void;
   onExportMarkdown?: () => void;
+  onExportReviewsCsv?: () => void;
   onSearch?: () => void;
   onRequirements?: () => void;
 }
@@ -172,11 +194,14 @@ export interface HeaderProps {
 export function Header({
   onNewFile,
   onOpen,
+  onOpenFolder,
   onSave,
   onSaveAs,
   onCloseTab,
   onOpenRecent,
+  onChangeUserName,
   onExportMarkdown,
+  onExportReviewsCsv,
   onSearch,
   onRequirements,
 }: HeaderProps) {
@@ -219,10 +244,14 @@ export function Header({
       <FileMenu
         onNewFile={onNewFile}
         onOpen={onOpen}
+        onOpenFolder={onOpenFolder}
         onSave={onSave}
         onSaveAs={onSaveAs}
         onCloseTab={onCloseTab}
         onOpenRecent={onOpenRecent}
+        onChangeUserName={onChangeUserName}
+        onExportMarkdown={onExportMarkdown}
+        onExportReviewsCsv={onExportReviewsCsv}
       />
 
       <div className="mx-1 h-5 w-px bg-[var(--color-border)]" />
@@ -237,7 +266,7 @@ export function Header({
       />
 
       {activeTab?.isDirty && (
-        <span className="flex shrink-0 items-center gap-1 text-xs text-[var(--color-muted)]">
+        <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-amber-600 dark:text-amber-400">
           <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
           Unsaved
         </span>
@@ -293,6 +322,12 @@ export function Header({
               onClick={() => { onExportMarkdown?.(); setExportOpen(false); }}
             >
               Export Markdown (.md)
+            </button>
+            <button
+              className="w-full px-3 py-1.5 text-left text-xs hover:bg-[var(--color-border)]"
+              onClick={() => { onExportReviewsCsv?.(); setExportOpen(false); }}
+            >
+              Export Reviews CSV…
             </button>
             <button
               disabled

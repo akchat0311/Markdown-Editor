@@ -1,4 +1,9 @@
 import type { Editor, Range } from "@tiptap/core";
+import type { JSONContent } from "@tiptap/core";
+import { useConfigStore } from "@/stores/configStore";
+import { deriveOutline, flattenOutline } from "@/editor/utils/deriveOutline";
+import { derivePattern, analyzeRequirements, nextAvailableId, insertRequirementAfter } from "@/editor/utils/requirementOps";
+import { getSectionRange } from "@/editor/utils/outlineOps";
 
 export interface SlashCommandItem {
   id: string;
@@ -7,6 +12,91 @@ export interface SlashCommandItem {
   icon: string;
   keywords: string[];
   command: (editor: Editor, range: Range) => void;
+}
+
+function makeRequirementSlashItem(): SlashCommandItem | null {
+  const { requirementPattern } = useConfigStore.getState();
+  if (!requirementPattern) return null;
+
+  return {
+    id: "requirement",
+    label: "New Requirement",
+    description: "Insert requirement after current position",
+    icon: ">H#",
+    keywords: ["req", "requirement", "new req", "insert req"],
+    command: (editor: Editor, range: Range) => {
+      const { requirementPattern: pattern } = useConfigStore.getState();
+      if (!pattern) return;
+
+      const derived = derivePattern(pattern.example);
+      if (!derived) return;
+
+      const { prefix, digits } = derived;
+
+      // Capture cursor position before deleting the slash text
+      const cursorPos = range.from;
+
+      // Remove the "/" and any filter text the user typed
+      editor.chain().deleteRange(range).run();
+
+      // Re-read doc state after deletion
+      const docContent = editor.state.doc.content.toJSON() as JSONContent[];
+      const flat = flattenOutline(deriveOutline(editor));
+      const analysis = analyzeRequirements(flat, docContent, pattern.example);
+      const existingReqs = analysis?.requirements ?? [];
+      const newId = nextAvailableId(existingReqs, prefix, digits);
+
+      // Anchor: nearest requirement before the cursor so the new one lands right after it
+      const reqsBefore = existingReqs.filter((r) => r.node.pmPos <= cursorPos);
+      const anchor =
+        reqsBefore.length > 0
+          ? reqsBefore[reqsBefore.length - 1]
+          : existingReqs[0];
+
+      let nodeIndex: number;
+      let nodeLevel: number;
+
+      if (anchor) {
+        nodeIndex = anchor.node.index;
+        nodeLevel = anchor.node.level ?? 3;
+      } else {
+        // No requirements yet — insert after whichever top-level node held the cursor
+        let fallback = 0;
+        editor.state.doc.forEach((_n, offset, idx) => {
+          if (offset <= cursorPos) fallback = idx;
+        });
+        nodeIndex = fallback;
+        nodeLevel = 3;
+      }
+
+      const [, insertedAtIndex] = getSectionRange(docContent, nodeIndex, nodeLevel);
+      const newContent = insertRequirementAfter(docContent, nodeIndex, nodeLevel, newId);
+
+      // Use setTimeout to avoid React's flushSync conflict (same pattern as OutlinePanel)
+      setTimeout(() => {
+        editor.commands.setContent({ type: "doc", content: newContent });
+
+        let targetPmPos = -1;
+        editor.state.doc.forEach((_n, offset, idx) => {
+          if (idx === insertedAtIndex) targetPmPos = offset;
+        });
+
+        if (targetPmPos >= 0) {
+          const insertedNode = editor.state.doc.nodeAt(targetPmPos);
+          const isContainer =
+            insertedNode?.type.name === "blockquote" ||
+            insertedNode?.type.name === "callout";
+          const innerOffset = isContainer ? 2 : 1;
+          editor
+            .chain()
+            .focus()
+            .setTextSelection(targetPmPos + innerOffset + newId.length)
+            .scrollIntoView()
+            .run();
+        }
+      }, 0);
+    },
+  };
 }
 
 export const SLASH_COMMAND_ITEMS: SlashCommandItem[] = [
@@ -172,9 +262,12 @@ export const SLASH_COMMAND_ITEMS: SlashCommandItem[] = [
 ];
 
 export function filterSlashCommandItems(query: string): SlashCommandItem[] {
+  const reqItem = makeRequirementSlashItem();
+  const allItems = reqItem ? [reqItem, ...SLASH_COMMAND_ITEMS] : SLASH_COMMAND_ITEMS;
+
   const q = query.trim().toLowerCase();
-  if (!q) return SLASH_COMMAND_ITEMS;
-  return SLASH_COMMAND_ITEMS.filter(
+  if (!q) return allItems;
+  return allItems.filter(
     (item) =>
       item.label.toLowerCase().includes(q) || item.keywords.some((k) => k.includes(q)),
   );

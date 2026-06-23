@@ -12,6 +12,8 @@ export interface TabData {
   lastSavedAt: number | null;
   fileName?: string;
   fileHandle?: FileSystemFileHandle;
+  /** Handle for the companion .review.json file — set after first Save Review As. */
+  reviewHandle?: FileSystemFileHandle;
   /** True for template/sample documents — never dirty, never saved to disk. */
   isReadOnly?: boolean;
 }

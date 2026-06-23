@@ -13,8 +13,8 @@ import type { OutlineNode } from "@/types/outline";
  *   index  — 0-based index in doc.content[] of the heading or its container,
  *            used for structural ops (moveSectionBefore, deleteSection, etc.)
  *
- * Headings inside containers are marked readonly: true — structural edits
- * (rename, delete, move) are not available for them.
+ * Headings inside containers use the container's top-level index so that
+ * structural ops (move, delete, duplicate) act on the whole blockquote section.
  */
 export function deriveOutline(editor: Editor | null): OutlineNode[] {
   if (!editor) return [];
@@ -54,7 +54,7 @@ export function deriveOutline(editor: Editor | null): OutlineNode[] {
       node.forEach((child: PMNode, childOffset: number) => {
         if (child.type.name === "heading") {
           // offset + 1: skip the container's opening token to get the child's absolute pos
-          pushHeading(child, offset + 1 + childOffset, index, true);
+          pushHeading(child, offset + 1 + childOffset, index);
         }
       });
     }

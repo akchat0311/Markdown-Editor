@@ -2,6 +2,7 @@ import {
   useContext,
   useState,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useCallback,
@@ -16,7 +17,7 @@ import {
   findActiveHeadingKey,
 } from "@/editor/utils/deriveOutline";
 import {
-  getSectionRange,
+  getNodeSectionRange,
   moveSectionBefore,
   moveSectionAfter,
   duplicateSection,
@@ -39,7 +40,9 @@ import {
   type DerivedPattern,
   type RequirementAnalysis,
 } from "@/editor/utils/requirementOps";
+import { rewriteHeadingId } from "@/editor/utils/requirementHeadingOps";
 import { useConfigStore } from "@/stores/configStore";
+import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
 import type { OutlineNode } from "@/types/outline";
 
 const DEBOUNCE_MS = 150;
@@ -314,7 +317,7 @@ function TreeItem({
       <div
         role="button"
         tabIndex={0}
-        draggable={searchState === null && !isRenaming && !node.readonly}
+        draggable={searchState === null && !isRenaming}
         className={[
           "group flex cursor-pointer select-none items-center gap-1 rounded-sm py-[3px] pr-2 text-xs leading-5 outline-none",
           "hover:bg-[var(--color-border)]",
@@ -849,6 +852,19 @@ function ContextMenu({
 }: ContextMenuProps) {
   const { node, canMoveUp, canMoveDown, x, y, subtreeIds, siblingIds, childrenIds } = state;
   const isReadonly = node.readonly === true;
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Measure actual menu dimensions after first paint and flip position so the
+  // menu is never clipped by the viewport edge. Starts hidden to avoid flash.
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!menuRef.current) return;
+    const { offsetWidth, offsetHeight } = menuRef.current;
+    const MARGIN = 6;
+    const left = Math.max(MARGIN, Math.min(x, window.innerWidth - offsetWidth - MARGIN));
+    const top = Math.max(MARGIN, Math.min(y, window.innerHeight - offsetHeight - MARGIN));
+    setPos({ left, top });
+  }, [x, y]);
 
   useEffect(() => {
     const onMouseDown = () => onClose();
@@ -892,13 +908,15 @@ function ContextMenu({
     </button>
   );
 
-  const safeX = Math.min(x, window.innerWidth - 172);
-  const safeY = Math.min(y, window.innerHeight - 220);
-
   return (
     <div
+      ref={menuRef}
       className="fixed z-[9999] min-w-[160px] rounded-md border border-[var(--color-border)] bg-[var(--color-paper)] py-1 shadow-xl"
-      style={{ left: safeX, top: safeY }}
+      style={{
+        left: pos?.left ?? x,
+        top: pos?.top ?? y,
+        visibility: pos ? "visible" : "hidden",
+      }}
       onMouseDown={(e) => e.stopPropagation()}
     >
       {item("Rename", () => onRename(node), isReadonly)}
@@ -978,9 +996,11 @@ function EmptyState({ children }: { children: React.ReactNode }) {
 
 interface OutlinePanelProps {
   width: number;
+  /** When true, the panel fills its parent instead of setting style.width itself. */
+  noWidthStyle?: boolean;
 }
 
-export function OutlinePanel({ width }: OutlinePanelProps) {
+export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
   const editor = useContext(EditorContext);
 
   // ── Outline state ───────────────────────────────────────────────────────────
@@ -1188,7 +1208,7 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
   // Unlike applyContentOp (two dispatches: setContent + setTextSelection),
   // this folds the content replacement and cursor restoration into one tr so
   // Cmd+Z reverts the entire move in a single undo step.
-  // sFrom/sTo = getSectionRange result for the moved section (pre-move indices).
+  // sFrom/sTo = getNodeSectionRange result for the moved section (pre-move indices).
   // insertedAtIndex = block index in newContent where the section heading lands.
   const applyMoveOp = useCallback(
     (
@@ -1325,7 +1345,7 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
   // ── Drag and drop ───────────────────────────────────────────────────────────
   const handleDragStart = useCallback(
     (staleNode: OutlineNode) => {
-      if (!editor || staleNode.readonly) return;
+      if (!editor) return;
       const freshFlat = flattenOutline(deriveOutline(editor));
       const content = getDocContent();
       const level = staleNode.level ?? 1;
@@ -1432,7 +1452,7 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
         } else if (sourceLevel > targetLevel) {
           insertAt = adjustedTarget + 1;
         } else {
-          const [, tTo] = getSectionRange(remaining, adjustedTarget, targetLevel);
+          const [, tTo] = getNodeSectionRange(remaining, adjustedTarget, targetLevel);
           insertAt = tTo;
         }
 
@@ -1452,7 +1472,7 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
 
         const sourceLevel = source.level ?? 1;
         const targetLevel = freshTarget.level ?? 1;
-        const [sFrom, sTo] = getSectionRange(content, source.index, sourceLevel);
+        const [sFrom, sTo] = getNodeSectionRange(content, source.index, sourceLevel);
         const sLen = sTo - sFrom;
 
         let newContent: JSONContent[];
@@ -1463,7 +1483,7 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
             newContent = moveSectionBefore(content, source.index, sourceLevel, freshTarget.index);
             insertedAtIndex = freshTarget.index > sFrom ? freshTarget.index - sLen : freshTarget.index;
           } else {
-            const [, tTo] = getSectionRange(content, freshTarget.index, targetLevel);
+            const [, tTo] = getNodeSectionRange(content, freshTarget.index, targetLevel);
             newContent = moveSectionAfter(content, source.index, sourceLevel, freshTarget.index, targetLevel);
             insertedAtIndex = tTo > sFrom ? tTo - sLen : tTo;
           }
@@ -1590,7 +1610,7 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
 
   const handleMoveUp = useCallback(
     (node: OutlineNode) => {
-      if (!editor || node.readonly) return;
+      if (!editor) return;
       // Re-derive fresh at click time. node.key is fresh (set by handleContextMenu
       // from a fresh derivation), so findIndex by key is reliable here.
       const freshFlat = flattenOutline(deriveOutline(editor));
@@ -1609,7 +1629,7 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
 
   const handleMoveDown = useCallback(
     (node: OutlineNode) => {
-      if (!editor || node.readonly) return;
+      if (!editor) return;
       const freshFlat = flattenOutline(deriveOutline(editor));
       const level = node.level ?? 1;
       const sameLevelInOrder = freshFlat.filter((n) => n.level === level);
@@ -1659,7 +1679,7 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
       const { prefix, digits } = derivedPattern;
       const newId = nextAvailableId(analysis.requirements, prefix, digits);
       const content = getDocContent();
-      const [, insertedAtIndex] = getSectionRange(
+      const [, insertedAtIndex] = getNodeSectionRange(
         content,
         node.index,
         node.level ?? 1
@@ -1667,16 +1687,24 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
       applyContentOp(
         insertRequirementAfter(content, node.index, node.level ?? 1, newId)
       );
-      // Place cursor after the ID text in the newly inserted heading
+      // Place cursor after the ID text in the newly inserted heading.
+      // For blockquote-wrapped headings the inserted node is a blockquote, so
+      // we need +2 (blockquote open token + heading open token) instead of +1.
       let targetPmPos = -1;
       editor.state.doc.forEach((_n, offset, idx) => {
         if (idx === insertedAtIndex) targetPmPos = offset;
       });
       if (targetPmPos >= 0) {
+        const insertedNode = editor.state.doc.nodeAt(targetPmPos);
+        const innerOffset =
+          insertedNode?.type.name === "blockquote" ||
+          insertedNode?.type.name === "callout"
+            ? 2
+            : 1;
         editor
           .chain()
           .focus()
-          .setTextSelection(targetPmPos + 1 + newId.length)
+          .setTextSelection(targetPmPos + innerOffset + newId.length)
           .scrollIntoView()
           .run();
       }
@@ -1694,15 +1722,21 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
 
     // Apply in reverse document order (highest pmPos first) so that each
     // replacement doesn't shift the absolute positions used by subsequent steps.
-    for (const { pmPos, newLabel } of [...replacements].reverse()) {
+    for (const { pmPos, newId, entry } of [...replacements].reverse()) {
       const node = state.doc.nodeAt(pmPos);
       if (!node || node.type.name !== "heading") continue;
-      const textFrom = pmPos + 1;
-      const textTo = textFrom + node.textContent.length;
-      tr = tr.replaceWith(textFrom, textTo, state.schema.text(newLabel));
+      rewriteHeadingId(tr, pmPos, entry.id, newId);
     }
 
     editor.view.dispatch(tr);
+
+    // Migrate review comments to the new IDs in the same operation.
+    // Only process pairs where the ID actually changed.
+    const renumberComments = useReviewCommentsStore.getState().renumberComments;
+    for (const { newId, entry } of replacements) {
+      if (entry.id !== newId) renumberComments(entry.id, newId);
+    }
+
     setRenumberConfirmOpen(false);
   }, [editor, derivedPattern, analysis]);
 
@@ -1712,17 +1746,13 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
       const { prefix, digits } = derivedPattern;
       const target = nodes[nodes.length - 1]; // last occurrence by document order
       const newId = nextAvailableId(analysis.requirements, prefix, digits);
-      const suffix = target.label.slice(id.length);
-      const newLabel = newId + suffix;
 
       const { state } = editor;
       const node = state.doc.nodeAt(target.pmPos);
       if (!node || node.type.name !== "heading") return;
-      const textFrom = target.pmPos + 1;
-      const textTo = textFrom + node.textContent.length;
-      editor.view.dispatch(
-        state.tr.replaceWith(textFrom, textTo, state.schema.text(newLabel))
-      );
+      const tr = state.tr;
+      rewriteHeadingId(tr, target.pmPos, id, newId);
+      editor.view.dispatch(tr);
     },
     [editor, derivedPattern, analysis]
   );
@@ -1738,8 +1768,11 @@ export function OutlinePanel({ width }: OutlinePanelProps) {
       <aside
         ref={panelRef}
         tabIndex={-1}
-        className="flex shrink-0 flex-col overflow-hidden border-r border-[var(--color-border)] bg-[var(--color-paper)] outline-none"
-        style={{ width }}
+        className={[
+          "flex flex-col overflow-hidden border-r border-[var(--color-border)] bg-[var(--color-paper)] outline-none",
+          noWidthStyle ? "min-h-0 flex-1" : "shrink-0",
+        ].join(" ")}
+        style={noWidthStyle ? undefined : { width }}
         aria-label="Document outline"
       >
         {/* ── Header ── */}

@@ -7,3 +7,4 @@ export type { ToastEntry, ToastType } from "./toastStore";
 export { useConfigStore } from "./configStore";
 export type { RequirementPattern, ConfigState } from "./configStore";
 export { useStatusConfigStore } from "./statusConfigStore";
+export { useReviewCommentsStore } from "./reviewCommentsStore";

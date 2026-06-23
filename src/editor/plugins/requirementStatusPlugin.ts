@@ -5,18 +5,22 @@ import type { EditorView } from "@tiptap/pm/view";
 import type { Node as PMNode } from "@tiptap/pm/model";
 import { useConfigStore } from "@/stores/configStore";
 import { useStatusConfigStore } from "@/stores/statusConfigStore";
+import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
 import { getRequirementStatuses, resolveRequirementStatus } from "@/services/requirementStatusService";
 import { derivePattern, buildDetectionRegex } from "@/editor/utils/requirementOps";
+import { rewriteHeadingStatus, insertHeadingStatus } from "@/editor/utils/requirementHeadingOps";
 import type { RequirementStatus } from "@/types/requirementStatus";
+import type { ReviewComment } from "@/types/reviewComment";
 
 export const requirementStatusKey = new PluginKey<DecorationSet>("requirementStatus");
 
 // ── Badge color helpers ───────────────────────────────────────────────────────
 
 const BUILTIN_COLORS: Record<string, { bg: string; text: string }> = {
-  draft:    { bg: "#fef3c7", text: "#b45309" },
-  review:   { bg: "#dbeafe", text: "#1d4ed8" },
-  approved: { bg: "#dcfce7", text: "#15803d" },
+  draft:       { bg: "#fef3c7", text: "#b45309" },
+  ready:       { bg: "#ede9fe", text: "#6d28d9" },
+  "in-review": { bg: "#dbeafe", text: "#1d4ed8" },
+  approved:    { bg: "#dcfce7", text: "#15803d" },
 };
 const PALETTE = [
   { bg: "#f3e8ff", text: "#7c3aed" },
@@ -32,6 +36,79 @@ function badgeColors(statusId: string, statuses: RequirementStatus[]) {
   return idx >= 0 ? PALETTE[idx % PALETTE.length] : UNKNOWN_COLORS;
 }
 
+// ── Approval confirmation dialog (DOM-based, no React dependency) ─────────────
+
+function showApprovalConfirm(
+  openCount: number,
+  onConfirm: () => void,
+  onCancel: () => void,
+): void {
+  const overlay = document.createElement("div");
+  Object.assign(overlay.style, {
+    position: "fixed", inset: "0", zIndex: "400",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    background: "rgba(0,0,0,0.45)", backdropFilter: "blur(2px)",
+  });
+
+  const dialog = document.createElement("div");
+  Object.assign(dialog.style, {
+    background: "var(--color-paper)", border: "1px solid var(--color-border)",
+    borderRadius: "12px", boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
+    maxWidth: "320px", width: "calc(100% - 48px)",
+    padding: "24px", display: "flex", flexDirection: "column", gap: "12px",
+  });
+
+  const title = document.createElement("p");
+  title.textContent = "Approve with open comments?";
+  Object.assign(title.style, { fontSize: "14px", fontWeight: "600", color: "var(--color-text)", margin: "0" });
+
+  const body = document.createElement("p");
+  body.textContent = `This requirement has ${openCount} open review comment${openCount !== 1 ? "s" : ""}. Approving means these concerns are accepted or resolved out-of-band.`;
+  Object.assign(body.style, { fontSize: "13px", color: "var(--color-muted)", margin: "0", lineHeight: "1.5" });
+
+  const btnRow = document.createElement("div");
+  Object.assign(btnRow.style, { display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "4px" });
+
+  const makeBtn = (label: string, primary: boolean) => {
+    const btn = document.createElement("button");
+    btn.textContent = label;
+    btn.type = "button";
+    Object.assign(btn.style, {
+      border: "none", fontSize: "13px", padding: "6px 14px",
+      borderRadius: "6px", cursor: "pointer",
+      ...(primary
+        ? { background: "var(--color-accent)", color: "white", fontWeight: "500" }
+        : { background: "transparent", color: "var(--color-muted)" }),
+    });
+    if (!primary) {
+      btn.addEventListener("mouseenter", () => { btn.style.background = "var(--color-border)"; });
+      btn.addEventListener("mouseleave", () => { btn.style.background = "transparent"; });
+    }
+    return btn;
+  };
+
+  const cancelBtn = makeBtn("Cancel", false);
+  const approveBtn = makeBtn("Approve Anyway", true);
+
+  const dismiss = (confirmed: boolean) => {
+    overlay.remove();
+    if (confirmed) onConfirm(); else onCancel();
+  };
+
+  cancelBtn.addEventListener("mousedown", (e) => { e.preventDefault(); dismiss(false); });
+  approveBtn.addEventListener("mousedown", (e) => { e.preventDefault(); dismiss(true); });
+  overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) { e.preventDefault(); dismiss(false); } });
+
+  btnRow.appendChild(cancelBtn);
+  btnRow.appendChild(approveBtn);
+  dialog.appendChild(title);
+  dialog.appendChild(body);
+  dialog.appendChild(btnRow);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+  approveBtn.focus();
+}
+
 // ── Widget factory ────────────────────────────────────────────────────────────
 
 interface StatusRange {
@@ -39,6 +116,7 @@ interface StatusRange {
   bracketTo: number | null; // null = missing status (widget inserts text)
   statusId: string;
   nodePos: number;
+  reqId: string;
 }
 
 function createDropdownWidget(
@@ -86,30 +164,35 @@ function createDropdownWidget(
 
     let activeIdx = 0;
 
-    const applyStatus = (s: RequirementStatus) => {
-      // Re-derive bracket positions from the current doc at click time.
-      // The closure's bracketFrom/bracketTo may be stale if any document
-      // change occurred between widget creation and the click.
+    // Re-derive the heading node and dispatch the status change.
+    // Called after any confirmation dialog is dismissed.
+    const doApply = (s: RequirementStatus) => {
       const currentNode = view.state.doc.nodeAt(range.nodePos);
       if (!currentNode || currentNode.type.name !== "heading") return;
-
-      const text = currentNode.textContent;
-      const bracketMatch = text.match(/(\[[^\]]+\])\s*$/);
-      const newBracket = "[" + s.label + "]";
       const { tr } = view.state;
-
-      if (!bracketMatch) {
-        tr.insertText(" " + newBracket, range.nodePos + 1 + text.length);
+      const hasBracket = /\[[^\]]+\]\s*$/.test(currentNode.textContent);
+      if (hasBracket) {
+        rewriteHeadingStatus(tr, range.nodePos, currentNode, s.label);
       } else {
-        const charOffset = text.lastIndexOf(bracketMatch[1]);
-        const freshFrom = range.nodePos + 1 + charOffset;
-        const freshTo = freshFrom + bracketMatch[1].length;
-        tr.replaceWith(freshFrom, freshTo, view.state.schema.text(newBracket));
+        insertHeadingStatus(tr, range.nodePos, currentNode, s.label);
       }
-
       view.dispatch(tr);
-      closeMenu();
       view.focus();
+    };
+
+    const applyStatus = (s: RequirementStatus) => {
+      // Soft-block: show confirmation if approving a requirement with open comments.
+      if (s.id === "approved" && range.reqId) {
+        const stored = useReviewCommentsStore.getState().getComments(range.reqId) as ReviewComment[];
+        const openCount = stored.filter((c) => c.status === "open").length;
+        if (openCount > 0) {
+          closeMenu();
+          showApprovalConfirm(openCount, () => doApply(s), () => view.focus());
+          return;
+        }
+      }
+      doApply(s);
+      closeMenu();
     };
 
     statuses.forEach((s, idx) => {
@@ -196,6 +279,65 @@ function createDropdownWidget(
   };
 }
 
+// ── Auto-insert Draft for new requirements ────────────────────────────────────
+
+/**
+ * Called from plugin view.update(). Scans for requirement headings that have no
+ * [Status] bracket AND the cursor is not inside them, then inserts "[Draft]"
+ * automatically. This covers the direct-typing case: the user types a heading
+ * that matches the requirement pattern and moves on without setting a status.
+ *
+ * Processes headings in reverse document order so earlier insertions do not
+ * shift the positions of subsequent ones within the same transaction.
+ * Marked addToHistory:false so it does not appear as a separate undo step.
+ */
+function autoInsertDraftStatus(view: EditorView): void {
+  const { requirementPattern } = useConfigStore.getState();
+  if (!requirementPattern) return;
+
+  const derived = derivePattern(requirementPattern.example);
+  if (!derived) return;
+
+  const statuses = getRequirementStatuses();
+  if (statuses.length === 0) return;
+
+  const draftStatus = statuses.find((s) => s.id === "draft") ?? statuses[0];
+  const { prefix } = derived;
+  const regex = buildDetectionRegex(prefix);
+  const { state } = view;
+  const { from: selFrom, to: selTo } = state.selection;
+
+  const pending: Array<{ offset: number; node: import("@tiptap/pm/model").Node }> = [];
+
+  const checkHeading = (node: import("@tiptap/pm/model").Node, offset: number) => {
+    if (node.type.name !== "heading") return;
+    const range = findStatusRange(node, offset, regex, statuses, prefix);
+    if (!range || range.bracketTo !== null) return; // already has a bracket
+    // Don't auto-insert while cursor is inside this heading.
+    const headingFrom = offset + 1;
+    const headingTo   = offset + node.nodeSize - 1;
+    if (selFrom >= headingFrom && selTo <= headingTo) return;
+    pending.push({ offset, node });
+  };
+
+  state.doc.forEach((node, offset) => {
+    checkHeading(node, offset);
+    if (node.type.name === "blockquote" || node.type.name === "callout") {
+      node.forEach((child, childOffset) => checkHeading(child, offset + 1 + childOffset));
+    }
+  });
+
+  if (pending.length === 0) return;
+
+  const tr = state.tr;
+  for (let i = pending.length - 1; i >= 0; i--) {
+    const { offset, node } = pending[i];
+    insertHeadingStatus(tr, offset, node, draftStatus.label);
+  }
+  tr.setMeta("addToHistory", false);
+  view.dispatch(tr);
+}
+
 // ── Decoration builder ────────────────────────────────────────────────────────
 
 function findStatusRange(
@@ -203,9 +345,13 @@ function findStatusRange(
   nodePos: number,
   regex: RegExp,
   statuses: RequirementStatus[],
+  prefix: string,
 ): StatusRange | null {
   const text = headingNode.textContent;
   if (!regex.test(text)) return null;
+
+  const idMatch = text.match(regex);
+  const reqId = idMatch ? prefix + idMatch[1] : "";
 
   // Find the last `[...]` bracket group at end of heading text.
   const bracketMatch = text.match(/(\[[^\]]+\])\s*$/);
@@ -213,7 +359,7 @@ function findStatusRange(
   if (!bracketMatch) {
     // Requirement heading with no status bracket — "missing status" case.
     const insertPos = nodePos + 1 + text.length;
-    return { bracketFrom: insertPos, bracketTo: null, statusId: "unknown", nodePos };
+    return { bracketFrom: insertPos, bracketTo: null, statusId: "unknown", nodePos, reqId };
   }
 
   const charOffset = text.lastIndexOf(bracketMatch[1]);
@@ -223,7 +369,7 @@ function findStatusRange(
   const rawText = bracketMatch[1].slice(1, -1); // strip [ and ]
   const statusId = resolveRequirementStatus(rawText, statuses);
 
-  return { bracketFrom, bracketTo, statusId, nodePos };
+  return { bracketFrom, bracketTo, statusId, nodePos, reqId };
 }
 
 function buildDecorations(state: EditorState): DecorationSet {
@@ -236,13 +382,14 @@ function buildDecorations(state: EditorState): DecorationSet {
   const statuses = getRequirementStatuses();
   if (statuses.length === 0) return DecorationSet.empty;
 
-  const regex = buildDetectionRegex(derived.prefix);
+  const { prefix } = derived;
+  const regex = buildDetectionRegex(prefix);
   const { from: selFrom, to: selTo } = state.selection;
   const decorations: Decoration[] = [];
 
   // Process a heading node at the given absolute PM position.
   function processHeading(node: import("@tiptap/pm/model").Node, nodePos: number) {
-    const range = findStatusRange(node, nodePos, regex, statuses);
+    const range = findStatusRange(node, nodePos, regex, statuses, prefix);
     if (!range) return;
 
     const { bracketFrom, bracketTo } = range;
@@ -339,7 +486,9 @@ export const requirementStatusPlugin = new Plugin<DecorationSet>({
     });
 
     return {
-      update() {},
+      update(v) {
+        autoInsertDraftStatus(v);
+      },
       destroy() {
         unsubscribe();
         unsubscribeConfig();

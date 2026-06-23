@@ -2,6 +2,7 @@ import { useContext } from "react";
 import { useEditorState } from "@tiptap/react";
 import { EditorContext } from "@/editor/EditorContext";
 import { useUIStore, useTabStore, getActiveTab } from "@/stores";
+import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
 
 function countWords(text: string): number {
   return text.trim() ? text.trim().split(/\s+/).length : 0;
@@ -12,12 +13,19 @@ function readingTime(words: number): string {
   return `${mins} min read`;
 }
 
-export function StatusBar() {
+interface StatusBarProps {
+  onSaveReview?: () => void;
+  onSaveReviewAs?: () => void;
+}
+
+export function StatusBar({ onSaveReview, onSaveReviewAs }: StatusBarProps) {
   const editor = useContext(EditorContext);
   const sourceMode = useUIStore((s) => s.sourceMode);
   const toggleSourceMode = useUIStore((s) => s.toggleSourceMode);
   const isDirty = useTabStore((s) => getActiveTab(s)?.isDirty ?? false);
   const isReadOnly = useTabStore((s) => getActiveTab(s)?.isReadOnly ?? false);
+  const reviewLoaded = useReviewCommentsStore((s) => s.loaded);
+  const reviewIsDirty = useReviewCommentsStore((s) => s.isDirty);
 
   const stats = useEditorState({
     editor,
@@ -46,17 +54,40 @@ export function StatusBar() {
       <span>{readingTime(words)}</span>
 
       <div className="ml-auto flex items-center gap-2">
+        {reviewLoaded && (
+          <>
+            {reviewIsDirty ? (
+              <button
+                onClick={onSaveReview}
+                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-amber-600 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-900/20 transition-colors"
+                title="Save review comments"
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                Unsaved Review Comments
+              </button>
+            ) : (
+              <button
+                onClick={onSaveReviewAs}
+                className="rounded px-1.5 py-0.5 opacity-40 hover:opacity-100 hover:bg-[var(--color-border)] transition-all"
+                title="Save review comments to a different file"
+              >
+                Review Saved
+              </button>
+            )}
+            <span className="opacity-40">·</span>
+          </>
+        )}
         {isReadOnly ? (
           <span className="rounded-sm bg-[var(--color-border)] px-1.5 py-px text-[9px] font-medium">
             Sample Document
           </span>
         ) : isDirty ? (
-          <span className="flex items-center gap-1">
+          <span className="flex items-center gap-1 font-medium text-amber-600 dark:text-amber-400">
             <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-            Unsaved Changes
+            Unsaved
           </span>
         ) : (
-          <span className="opacity-40">Saved</span>
+          <span className="opacity-60">Saved</span>
         )}
         <span className="opacity-40">·</span>
         <span className="opacity-40">UTF-8</span>

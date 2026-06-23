@@ -2,9 +2,10 @@ import { openDB, type IDBPDatabase } from "idb";
 import type { PersistedDocument } from "@/types/document";
 
 const DB_NAME = "md-editor";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const DOCS_STORE = "documents";
 export const RECENT_STORE = "recent_files";
+export const WORKSPACE_STORE = "workspace";
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
@@ -18,6 +19,12 @@ export function getDB(): Promise<IDBPDatabase> {
         if (oldVersion < 2) {
           if (!db.objectStoreNames.contains(RECENT_STORE)) {
             db.createObjectStore(RECENT_STORE, { keyPath: "name" });
+          }
+        }
+        if (oldVersion < 3) {
+          if (!db.objectStoreNames.contains(WORKSPACE_STORE)) {
+            // Singleton store: always keyed by "active".
+            db.createObjectStore(WORKSPACE_STORE, { keyPath: "key" });
           }
         }
       },

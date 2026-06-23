@@ -1,7 +1,7 @@
 import type { JSONContent } from "@tiptap/core";
 import type { OutlineNode } from "@/types/outline";
 import type { RequirementStatus } from "@/types/requirementStatus";
-import { getSectionRange, renameHeading } from "@/editor/utils/outlineOps";
+import { getNodeSectionRange, getSectionRange, renameHeading } from "@/editor/utils/outlineOps";
 import { resolveRequirementStatus } from "@/services/requirementStatusService";
 
 // ── Pattern derivation ────────────────────────────────────────────────────────
@@ -156,7 +156,7 @@ export function analyzeRequirements(
   // ── Section requirement counts ───────────────────────────────────────────
   const countsBySection = new Map<string, number>();
   for (const sectionNode of flatOutline) {
-    const [from, to] = getSectionRange(
+    const [from, to] = getNodeSectionRange(
       docContent,
       sectionNode.index,
       sectionNode.level ?? 1
@@ -282,7 +282,11 @@ export function buildRequirementIndex(
 export interface RenumberReplacement {
   /** Absolute PM position of the heading node (same as entry.node.pmPos). */
   pmPos: number;
-  /** Full heading text after renumbering: newId + original suffix. */
+  /** Only the new ID string (e.g. "REQ_002") — use this to replace just the
+   *  ID prefix so that status-bracket formatting marks are never touched. */
+  newId: string;
+  /** Full heading text after renumbering: newId + original suffix (kept for
+   *  reference / debugging; callers should prefer newId for PM edits). */
   newLabel: string;
   entry: RequirementEntry;
 }
@@ -309,7 +313,7 @@ export function computeRenumberReplacements(
   return requirements.map((entry, i) => {
     const newId = formatId(i + 1, prefix, digits);
     const suffix = entry.node.label.slice(entry.id.length);
-    return { pmPos: entry.node.pmPos, newLabel: newId + suffix, entry };
+    return { pmPos: entry.node.pmPos, newId, newLabel: newId + suffix, entry };
   });
 }
 
@@ -340,12 +344,18 @@ export function insertRequirementAfter(
   newId: string
 ): JSONContent[] {
   const [, to] = getSectionRange(content, nodeIndex, nodeLevel);
-  const newHeading: JSONContent = {
+  const heading: JSONContent = {
     type: "heading",
     attrs: { level: nodeLevel },
-    content: [{ type: "text", text: newId }],
+    content: [{ type: "text", text: newId + " [Draft]" }],
   };
-  return [...content.slice(0, to), newHeading, ...content.slice(to)];
+  // Mirror the container type of the source node so `> ### REQ` stays in blockquotes.
+  const containerType = content[nodeIndex]?.type;
+  const newSection: JSONContent =
+    containerType === "blockquote" || containerType === "callout"
+      ? { type: containerType, content: [heading] }
+      : heading;
+  return [...content.slice(0, to), newSection, ...content.slice(to)];
 }
 
 /**

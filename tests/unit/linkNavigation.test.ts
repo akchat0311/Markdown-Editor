@@ -122,16 +122,68 @@ describe("findHeadingBySlug", () => {
     expect(pos).toBeGreaterThan(0); // second node, not at offset 0
   });
 
-  it("finds a heading inside a blockquote", () => {
-    const heading = makeHeading("REQ_001 [Draft]");
-    const doc = makeDoc([makeBlockquote([heading])]);
-    const pos = findHeadingBySlug(doc as never, "req_001-draft");
-    expect(pos).not.toBeNull();
+  // ── Exact slug matching (blockquotes) ───────────────────────────────────────
+
+  it("finds a heading inside a blockquote by exact slug", () => {
+    const doc = makeDoc([makeBlockquote([makeHeading("REQ_001 [Draft]")])]);
+    // exact GFM slug: slugify("REQ_001 [Draft]") = "req_001-draft"
+    expect(findHeadingBySlug(doc as never, "req_001-draft")).not.toBeNull();
   });
 
   it("returns null when the blockquote contains no matching heading", () => {
     const doc = makeDoc([makeBlockquote([makeHeading("Something Else")])]);
     expect(findHeadingBySlug(doc as never, "req_001")).toBeNull();
+  });
+
+  // ── Bracket-stripped fallback (requirement anchors) ───────────────────────
+  // Users write [REQ_015](#req_015) as shorthand. The GFM slug of
+  // "REQ_015 [Draft]" is "req_015-draft", so exact matching fails.
+  // The stripped fallback strips trailing [Status] and re-slugifies.
+
+  it("resolves a requirement anchor via bracket-stripped fallback (top-level)", () => {
+    const doc = makeDoc([makeHeading("REQ_015 [Draft]")]);
+    // #req_015 does NOT match exact slug "req_015-draft"
+    // but DOES match stripped slug slugify("REQ_015") = "req_015"
+    expect(findHeadingBySlug(doc as never, "req_015")).toBe(0);
+  });
+
+  it("resolves a requirement anchor inside a blockquote via bracket-stripped fallback", () => {
+    const doc = makeDoc([makeBlockquote([makeHeading("REQ_015 [Draft]")])]);
+    const pos = findHeadingBySlug(doc as never, "req_015");
+    expect(pos).not.toBeNull();
+  });
+
+  it("resolves requirement anchor in mixed doc (top-level and blockquoted requirements)", () => {
+    const doc = makeDoc([
+      makeHeading("Brake Monitoring"),              // section heading
+      makeBlockquote([makeHeading("REQ_001 [Draft]")]),  // blockquoted requirement
+      makeHeading("REQ_002 [Approved]"),            // top-level requirement
+    ]);
+    // Section heading — exact slug match
+    expect(findHeadingBySlug(doc as never, "brake-monitoring")).toBe(0);
+    // Blockquoted requirement — stripped fallback
+    expect(findHeadingBySlug(doc as never, "req_001")).not.toBeNull();
+    // Top-level requirement — stripped fallback
+    expect(findHeadingBySlug(doc as never, "req_002")).not.toBeNull();
+  });
+
+  it("prefers exact slug match over stripped match when both exist", () => {
+    // "REQ_015" (exact) appears after "REQ_015 [Draft]" (stripped) in document
+    const doc = makeDoc([
+      makeHeading("REQ_015 [Draft]"), // pos 0 — stripped match
+      makeHeading("REQ_015"),         // pos N — exact match
+    ]);
+    const pos = findHeadingBySlug(doc as never, "req_015");
+    // Should return the EXACT match (second heading), not the stripped match (first)
+    expect(pos).toBeGreaterThan(0);
+  });
+
+  it("bracket-stripped fallback handles multi-word status brackets", () => {
+    const doc = makeDoc([makeHeading("SYS_003 [In Review]")]);
+    // stripped: slugify("SYS_003") = "sys_003"
+    expect(findHeadingBySlug(doc as never, "sys_003")).toBe(0);
+    // exact: slugify("SYS_003 [In Review]") = "sys_003-in-review"
+    expect(findHeadingBySlug(doc as never, "sys_003-in-review")).toBe(0);
   });
 
   it("finds the first matching heading in document order", () => {

@@ -3,9 +3,10 @@ import type { RequirementStatus, RequirementStatusConfig } from "@/types/require
 const CONFIG_URL = "/config/requirement-statuses.json";
 
 const FALLBACK_STATUSES: RequirementStatus[] = [
-  { id: "draft",    label: "Draft",    order: 1, aliases: ["Draft", "draft", "DRAFT"] },
-  { id: "review",   label: "Review",   order: 2, aliases: ["Review", "review", "REVIEW"] },
-  { id: "approved", label: "Approved", order: 3, aliases: ["Approved", "approved", "APPROVED"] },
+  { id: "draft",     label: "Draft",            order: 1, aliases: ["Draft", "draft", "DRAFT"] },
+  { id: "ready",     label: "Ready for review",  order: 2, aliases: ["Ready for review", "Ready For Review", "READY FOR REVIEW", "ready for review", "Ready"] },
+  { id: "in-review", label: "In Review",         order: 3, aliases: ["In Review", "in review", "IN REVIEW", "Review", "review", "REVIEW"] },
+  { id: "approved",  label: "Approved",           order: 4, aliases: ["Approved", "approved", "APPROVED"] },
 ];
 
 let cached: RequirementStatus[] | null = null;

@@ -25,9 +25,13 @@ export function useRequirementIndex(
   const statuses = useStatusConfigStore((s) => s.statuses);
 
   // Subscribe to doc changes (ignores cursor-only transactions via equalityFn).
-  const docVersion = useEditorState({
+  // Using the doc node reference rather than content.size: PM creates a new doc
+  // object on every content-modifying transaction and reuses the same reference
+  // for selection-only transactions.  content.size is not a unique fingerprint —
+  // same-length replacements (e.g. REQ_003 → REQ_001) leave it unchanged.
+  const doc = useEditorState({
     editor,
-    selector: ({ editor: e }) => e?.state.doc.content.size ?? 0,
+    selector: ({ editor: e }) => e?.state.doc ?? null,
     equalityFn: (a, b) => a === b,
   });
 
@@ -46,9 +50,9 @@ export function useRequirementIndex(
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  // docVersion and statuses are the reactive triggers.
+  // doc and statuses are the reactive triggers.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor, patternExample, docVersion, statuses]);
+  }, [editor, patternExample, doc, statuses]);
 
   return index;
 }

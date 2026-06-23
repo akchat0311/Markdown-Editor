@@ -459,7 +459,7 @@ body {
 .ProseMirror a {
   color: var(--color-accent);
   text-decoration: underline;
-  cursor: text;
+  cursor: pointer;
 }
 
 /* ── Link navigation tooltip ─────────────────────────────────────────────── */
@@ -585,4 +585,69 @@ body {
 .req-status-option:hover,
 .req-status-option--active {
   background: var(--color-border);
+}
+
+/* ── Review comment badge (inline, after status dropdown) ────────────────── */
+
+.req-comment-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 0.45em;
+  padding: 2px 6px;
+  border-radius: 9999px;
+  font-size: 0.67em;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  vertical-align: middle;
+  border: none;
+  white-space: nowrap;
+  transition: background-color 0.12s, color 0.12s, border-color 0.12s;
+}
+
+/* Open comments — red, urgent */
+.req-comment-badge--open {
+  background: rgba(220, 38, 38, 0.10);
+  color: #dc2626;
+}
+.req-comment-badge--open:hover { background: rgba(220, 38, 38, 0.18); }
+.dark .req-comment-badge--open { color: #f87171; background: rgba(220, 38, 38, 0.12); }
+
+/* Responded — amber, awaiting closure */
+.req-comment-badge--pending {
+  background: rgba(217, 119, 6, 0.10);
+  color: #d97706;
+}
+.req-comment-badge--pending:hover { background: rgba(217, 119, 6, 0.18); }
+.dark .req-comment-badge--pending { color: #fbbf24; background: rgba(217, 119, 6, 0.12); }
+
+/* All closed — green, resolved */
+.req-comment-badge--clear {
+  background: rgba(22, 163, 74, 0.10);
+  color: #16a34a;
+}
+.req-comment-badge--clear:hover { background: rgba(22, 163, 74, 0.18); }
+.dark .req-comment-badge--clear { color: #4ade80; background: rgba(22, 163, 74, 0.12); }
+
+/* Dashed outline when no comments exist — visually distinct but subtle */
+.req-comment-badge--empty {
+  background: transparent;
+  color: var(--color-muted);
+  border: 1px dashed var(--color-border);
+}
+
+.req-comment-badge--empty:hover {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+  background: rgba(37, 99, 235, 0.05);
+}
+
+.dark .req-comment-badge--empty:hover {
+  background: rgba(91, 141, 239, 0.07);
+}
+
+.req-comment-badge:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
 }
