@@ -3,6 +3,8 @@ import { TableKit } from "@tiptap/extension-table";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import { WorkspaceImage } from "./WorkspaceImage";
+import { RawHtmlBlock } from "./RawHtmlBlock";
+import { RawHtmlInline } from "./RawHtmlInline";
 import Placeholder from "@tiptap/extension-placeholder";
 import { Extension } from "@tiptap/core";
 import type { Extensions } from "@tiptap/core";
@@ -45,6 +47,8 @@ export function createEditorExtensions(): Extensions {
     TaskList,
     TaskItem.configure({ nested: true }),
     WorkspaceImage.configure({ inline: false }),
+    RawHtmlBlock,
+    RawHtmlInline,
     Placeholder.configure({
       placeholder: ({ node }) =>
         node.type.name === "heading" ? "Heading" : 'Type "/" for commands…',

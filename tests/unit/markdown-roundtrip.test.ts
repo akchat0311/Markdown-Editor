@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseMarkdownToDoc, serializeDocToMarkdown } from "@/markdown";
+import corpusRaw from "../fixtures/corpus.md?raw";
 
 /** Runs markdown -> doc -> markdown and returns the regenerated markdown. */
 function roundtrip(markdown: string): string {
@@ -339,6 +340,201 @@ describe("markdown roundtrip: math (M4.2)", () => {
       "",
     ].join("\n");
     expectStableRoundtrip(md);
+  });
+});
+
+// ── Block-level HTML preservation (rawHtmlBlock) ──────────────────────────────
+//
+// These tests guard the block HTML path: remark "html" block nodes must survive
+// the full parse → editor → serialize pipeline without being escaped, dropped,
+// or converted to paragraph/text nodes.
+//
+// The companion inline fix (<br> in table cells) is also covered here so that
+// a single test file covers all HTML fidelity regression scenarios.
+
+describe("markdown roundtrip: block HTML preservation", () => {
+  // ── Node type checks ────────────────────────────────────────────────────────
+
+  it("parses a block HTML comment into a rawHtmlBlock node (not a paragraph)", () => {
+    const doc = parseMarkdownToDoc("<!-- review note -->\n");
+    expect(doc.content?.[0].type).toBe("rawHtmlBlock");
+    expect(doc.content?.[0].attrs?.html).toBe("<!-- review note -->");
+  });
+
+  it("parses a <details> block into a rawHtmlBlock node", () => {
+    const doc = parseMarkdownToDoc(
+      "<details>\n<summary>More</summary>\nContent\n</details>\n"
+    );
+    expect(doc.content?.[0].type).toBe("rawHtmlBlock");
+    expect(doc.content?.[0].attrs?.html).toContain("<details>");
+  });
+
+  it("parses a standalone <img> block into a rawHtmlBlock node", () => {
+    const doc = parseMarkdownToDoc('<img src="x.png" alt="y">\n');
+    expect(doc.content?.[0].type).toBe("rawHtmlBlock");
+  });
+
+  // ── Exact round-trip ────────────────────────────────────────────────────────
+
+  it("preserves HTML comments verbatim", () => {
+    expectStableRoundtrip("<!-- review note -->\n");
+  });
+
+  it("preserves multi-word HTML comments verbatim", () => {
+    expectStableRoundtrip("<!-- TODO: verify this requirement against SRS-4.2 -->\n");
+  });
+
+  it("preserves a compact <details> block verbatim", () => {
+    expectStableRoundtrip(
+      "<details>\n<summary>More info</summary>\nContent here.\n</details>\n"
+    );
+  });
+
+  it("preserves a <div> with a class attribute verbatim", () => {
+    expectStableRoundtrip('<div class="warning">\nWarning content.\n</div>\n');
+  });
+
+  it("preserves a standalone block-level <img> tag verbatim", () => {
+    expectStableRoundtrip('<img src="assets/diagram.png" alt="Diagram">\n');
+  });
+
+  it("preserves a <figure> block verbatim", () => {
+    expectStableRoundtrip(
+      "<figure>\n<img src=\"x.png\">\n<figcaption>Caption</figcaption>\n</figure>\n"
+    );
+  });
+
+  // ── No escaping ─────────────────────────────────────────────────────────────
+
+  it("does not escape angle brackets in block HTML", () => {
+    const md = "<div class=\"warning\">\nContent.\n</div>\n";
+    const out = roundtrip(md);
+    expect(out).not.toContain("\\<");
+    expect(out).not.toContain("\\>");
+  });
+
+  it("does not escape angle brackets in HTML comments", () => {
+    const out = roundtrip("<!-- <internal> -->\n");
+    expect(out).not.toContain("\\<");
+    expect(out).toBe("<!-- <internal> -->\n");
+  });
+
+  // ── Mixed markdown + HTML ───────────────────────────────────────────────────
+
+  it("preserves block HTML adjacent to headings and paragraphs", () => {
+    const md = [
+      "## Section",
+      "",
+      "<!-- annotated section -->",
+      "",
+      "Some text.",
+      "",
+    ].join("\n");
+    expectStableRoundtrip(md);
+  });
+
+  it("preserves multiple HTML blocks in the same document", () => {
+    const md = [
+      "# Title",
+      "",
+      "<!-- start review -->",
+      "",
+      "Content paragraph.",
+      "",
+      "<!-- end review -->",
+      "",
+    ].join("\n");
+    expectStableRoundtrip(md);
+  });
+
+  it("preserves a document mixing headings, lists, and block HTML", () => {
+    const md = [
+      "## Requirements",
+      "",
+      "<div class=\"note\">",
+      "All requirements are normative.",
+      "</div>",
+      "",
+      "- REQ_001: The system shall do X.",
+      "- REQ_002: The system shall do Y.",
+      "",
+    ].join("\n");
+    expectStableRoundtrip(md);
+  });
+});
+
+// ── Table cell inline HTML fidelity (<br>) ────────────────────────────────────
+//
+// Separate describe block so failures are reported against the correct feature.
+
+describe("markdown roundtrip: table cell inline HTML fidelity", () => {
+  it("preserves <br> in a table cell verbatim", () => {
+    expectStableRoundtrip("| col |\n| - |\n| line1<br>line2 |\n");
+  });
+
+  it("preserves multiple <br> tags in the same table cell", () => {
+    expectStableRoundtrip("| col |\n| - |\n| line1<br>line2<br>line3 |\n");
+  });
+
+  it("preserves <br> in a multi-column table", () => {
+    expectStableRoundtrip(
+      "| A | B |\n| - | - |\n| row1a<br>row1b | plain |\n"
+    );
+  });
+
+  it("does not escape <br> in a table cell", () => {
+    const out = roundtrip("| col |\n| - |\n| a<br>b |\n");
+    expect(out).not.toContain("\\<");
+    expect(out).toContain("<br>");
+  });
+});
+
+// ── Underline HTML fidelity ───────────────────────────────────────────────────
+
+describe("markdown roundtrip: underline HTML fidelity", () => {
+  it("preserves <u>text</u> verbatim", () => {
+    expectStableRoundtrip("<u>Underlined</u>\n");
+  });
+
+  it("preserves <u> combined with bold", () => {
+    expectStableRoundtrip("**<u>Bold underline</u>**\n");
+  });
+
+  it("preserves <u> inside a paragraph with surrounding text", () => {
+    expectStableRoundtrip("Some <u>underlined</u> text here.\n");
+  });
+});
+
+// ── Corpus round-trip ─────────────────────────────────────────────────────────
+//
+// Runs the full parse → serialize pipeline against a realistic technical
+// document that exercises every major inline HTML path:
+//
+//   • rawHtmlInline atoms in paragraphs, headings, list items, blockquotes
+//   • atoms inside mark wrappers (bold, italic, bold+italic)
+//   • atoms inside link display text — the accessibility invariant test
+//   • atoms in table cells
+//   • code inside link and bold
+//   • block HTML (rawHtmlBlock), inline math, block math
+//   • custom marks (==highlight==, ^sup^, ~sub~) combined with marks
+//
+// The corpus must produce an EXACT round-trip on the first pass. If this test
+// fails, the serializer has a regression — do not relax it to idempotency-only.
+
+describe("markdown roundtrip: corpus document", () => {
+  // corpusRaw is loaded via Vite's ?raw import — no fs module needed.
+  // The trailing newline that editors add is preserved by the ?raw transform.
+  const corpus = corpusRaw;
+
+  it("round-trips the corpus exactly on first pass", () => {
+    const out = serializeDocToMarkdown(parseMarkdownToDoc(corpus));
+    expect(out).toBe(corpus);
+  });
+
+  it("corpus is idempotent on second pass", () => {
+    const once = serializeDocToMarkdown(parseMarkdownToDoc(corpus));
+    const twice = serializeDocToMarkdown(parseMarkdownToDoc(once));
+    expect(twice).toBe(once);
   });
 });
 

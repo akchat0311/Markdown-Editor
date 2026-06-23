@@ -6,7 +6,10 @@ import type {
   Blockquote,
   Break,
   Code,
+  Delete,
+  Emphasis,
   Heading,
+  Html,
   Image,
   InlineCode,
   Link,
@@ -15,6 +18,7 @@ import type {
   Paragraph,
   PhrasingContent,
   Root,
+  Strong,
   Table,
   TableCell,
   TableRow,
@@ -170,6 +174,9 @@ function blockToMdast(node: PMNode): BlockContent {
     case "table":
       return tableToMdast(node);
 
+    case "rawHtmlBlock":
+      return { type: "html", value: (node.attrs?.html as string) ?? "" } satisfies Html;
+
     default:
       if (import.meta.env.DEV) {
         console.warn(`[serializer] unrecognized node type "${node.type}", dropped`);
@@ -217,7 +224,7 @@ function tableToMdast(node: PMNode): Table {
         children: (row.content ?? []).map(
           (cell): TableCell => ({
             type: "tableCell",
-            children: inlineToMdast(extractCellInline(cell)),
+            children: inlineToMdast(extractCellInline(cell), true),
           })
         ),
       })
@@ -248,68 +255,211 @@ function flattenPlainText(nodes: PMNode[]): string {
   return nodes.map((n) => (n.type === "text" ? n.text ?? "" : "")).join("");
 }
 
-function inlineToMdast(nodes: PMNode[]): PhrasingContent[] {
+// ── Mark-group inline serialization ──────────────────────────────────────────
+//
+// Problem this replaces: the old node-centric design processed each PM node
+// independently. Every text node wrapped itself in its own mark stack, so
+// consecutive nodes sharing a link mark each produced a separate <a>:
+//
+//   [H<sub>2</sub>O](url)  →  [H](url)<sub>[2](url)</sub>[O](url)
+//
+// This broke accessibility (1 link → N links) and caused mark normalizations
+// like **<kbd>Ctrl</kbd>** → <kbd>**Ctrl**</kbd>.
+//
+// Fix: group consecutive nodes that share the same outermost mark, recurse
+// with that mark stripped, then wrap the group's children in one MDAST node.
+// rawHtmlInline atoms participate in groups via the marks inherited at parse
+// time (the parser now passes its `inherited` context to rawHtmlInline nodes).
+//
+// Recursion terminates because `stripped` grows by one mark per level and
+// MARK_PRIORITY is finite (8 elements). Maximum recursion depth = 8.
+
+const MARK_PRIORITY = [
+  "link",
+  "bold",
+  "italic",
+  "highlight",
+  "superscript",
+  "subscript",
+  "underline",
+  "strike",
+] as const;
+
+type WrapperMark = (typeof MARK_PRIORITY)[number];
+
+function pickOuterMark(activeMarks: PMMark[]): WrapperMark | null {
+  for (const name of MARK_PRIORITY) {
+    if (activeMarks.some((m) => m.type === name)) return name;
+  }
+  return null;
+}
+
+/** Two link marks group together only when their href AND title are identical. */
+function markAttrsEqual(a: PMMark, b: PMMark): boolean {
+  if (a.type !== b.type) return false;
+  if (a.type === "link") {
+    return (
+      String(a.attrs?.href ?? "") === String(b.attrs?.href ?? "") &&
+      String(a.attrs?.title ?? "") === String(b.attrs?.title ?? "")
+    );
+  }
+  return true;
+}
+
+function inlineToMdast(nodes: PMNode[], inTable = false): PhrasingContent[] {
+  return nodesWithMarks(nodes, new Set<string>(), inTable);
+}
+
+/**
+ * Recursively serialize a flat list of PM inline nodes into MDAST phrasing
+ * content, grouping by outermost mark.
+ *
+ * @param nodes   - PM nodes to serialize (text, rawHtmlInline, hardBreak, …)
+ * @param stripped - Mark type names already handled by ancestor calls.
+ *                  Grows by one per recursion level. Used to compute
+ *                  "activeMarks" = marks still needing a wrapper.
+ * @param inTable  - When true, hardBreak emits {html:"<br>"} instead of
+ *                  {break} because mdast-util-gfm collapses break in cells.
+ */
+function nodesWithMarks(
+  nodes: PMNode[],
+  stripped: Set<string>,
+  inTable: boolean,
+): PhrasingContent[] {
   const result: PhrasingContent[] = [];
-  for (const node of nodes) {
+  let i = 0;
+
+  while (i < nodes.length) {
+    const node = nodes[i];
+
+    // ── hardBreak: never carries marks; always emitted immediately ────────
     if (node.type === "hardBreak") {
-      result.push({ type: "break" } satisfies Break);
+      result.push(
+        inTable
+          ? ({ type: "html", value: "<br>" } satisfies Html)
+          : ({ type: "break" } satisfies Break),
+      );
+      i++;
       continue;
     }
-    if (node.type !== "text" || typeof node.text !== "string") continue;
-    result.push(...textNodeToMdast(node));
+
+    // ── Compute which marks still need handling at this recursion level ───
+    const activeMarks = (node.marks ?? []).filter((m) => !stripped.has(m.type));
+    const outerMark = pickOuterMark(activeMarks);
+
+    // ── rawHtmlInline base case ───────────────────────────────────────────
+    if (node.type === "rawHtmlInline") {
+      if (outerMark === null) {
+        result.push({ type: "html", value: (node.attrs?.html as string) ?? "" } satisfies Html);
+        i++;
+        continue;
+      }
+      // outerMark !== null → fall through to grouping
+    }
+
+    // ── text base cases ───────────────────────────────────────────────────
+    if (node.type === "text") {
+      if (outerMark === null) {
+        // No wrapper marks remain. Exclusive marks (inlineMath, code) take effect.
+        // code/inlineMath are deliberately excluded from MARK_PRIORITY so they
+        // are only emitted here, as leaf nodes inside any wrapper marks that
+        // have already been handled by ancestor calls (e.g. link > code gives
+        // [`code`](url) correctly rather than dropping the link).
+        if (activeMarks.some((m) => m.type === "inlineMath")) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          result.push({ type: "inlineMath", value: node.text ?? "" } as any);
+        } else if (activeMarks.some((m) => m.type === "code")) {
+          result.push({ type: "inlineCode", value: node.text ?? "" } satisfies InlineCode);
+        } else {
+          result.push({ type: "text", value: node.text ?? "" } satisfies MdastText);
+        }
+        i++;
+        continue;
+      }
+      // outerMark !== null → fall through to grouping
+    }
+
+    // ── Skip unrecognized node types ──────────────────────────────────────
+    if (node.type !== "text" && node.type !== "rawHtmlInline") {
+      i++;
+      continue;
+    }
+
+    // ── Mark grouping ─────────────────────────────────────────────────────
+    // Reaching here means: node is text or rawHtmlInline, outerMark is set.
+    // TypeScript cannot infer the non-null from the control flow above.
+    if (outerMark === null) { i++; continue; } // unreachable; guards the cast below
+
+    const outerMarkObj = activeMarks.find((m) => m.type === outerMark)!;
+
+    // Collect consecutive nodes that all carry outerMark with compatible attrs.
+    // Stop at: a node lacking the mark, a hardBreak (never carries marks), end.
+    let j = i;
+    while (j < nodes.length) {
+      const jn = nodes[j];
+      if (jn.type === "hardBreak") break;
+      const jActive = (jn.marks ?? []).filter((m) => !stripped.has(m.type));
+      const jMark = jActive.find(
+        (m) => m.type === outerMark && markAttrsEqual(m, outerMarkObj),
+      );
+      if (!jMark) break;
+      j++;
+    }
+
+    // Recurse: process the group with outerMark stripped.
+    const newStripped = new Set([...stripped, outerMark]);
+    const children = nodesWithMarks(nodes.slice(i, j), newStripped, inTable);
+    result.push(...applyMark(outerMark, outerMarkObj, children));
+    i = j;
   }
+
   return result;
 }
 
-function textNodeToMdast(node: PMNode): PhrasingContent[] {
-  const marks: PMMark[] = node.marks ?? [];
-  const text = node.text ?? "";
-  const hasMark = (type: string) => marks.some((m) => m.type === type);
-
-  if (hasMark("inlineMath")) {
-    // Inline math: wrap in $...$. The text content IS the LaTeX source (no delimiters stored).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return [{ type: "inlineMath", value: text } as any];
+/** Wrap a list of MDAST children in the MDAST structure for a single mark. */
+function applyMark(name: WrapperMark, mark: PMMark, children: PhrasingContent[]): PhrasingContent[] {
+  switch (name) {
+    case "link":
+      return [
+        {
+          type: "link",
+          url: String(mark.attrs?.href ?? ""),
+          title: mark.attrs?.title ? String(mark.attrs.title) : null,
+          children,
+        } satisfies Link,
+      ];
+    case "bold":
+      return [{ type: "strong", children } satisfies Strong];
+    case "italic":
+      return [{ type: "emphasis", children } satisfies Emphasis];
+    case "strike":
+      return [{ type: "delete", children } satisfies Delete];
+    // Delimiter-style marks: the mark is represented as a pair of html sibling
+    // nodes flanking the children, matching the existing serializer convention
+    // used before this change and preserved here for idempotency.
+    case "underline":
+      return [
+        { type: "html", value: "<u>" } satisfies Html,
+        ...children,
+        { type: "html", value: "</u>" } satisfies Html,
+      ];
+    case "subscript":
+      return [
+        { type: "html", value: "~" } satisfies Html,
+        ...children,
+        { type: "html", value: "~" } satisfies Html,
+      ];
+    case "superscript":
+      return [
+        { type: "html", value: "^" } satisfies Html,
+        ...children,
+        { type: "html", value: "^" } satisfies Html,
+      ];
+    case "highlight":
+      return [
+        { type: "html", value: "==" } satisfies Html,
+        ...children,
+        { type: "html", value: "==" } satisfies Html,
+      ];
   }
-
-  if (hasMark("code")) {
-    return [{ type: "inlineCode", value: text } satisfies InlineCode];
-  }
-
-  let phrasing: PhrasingContent[] = [{ type: "text", value: text } satisfies MdastText];
-
-  if (hasMark("strike")) {
-    phrasing = [{ type: "delete", children: phrasing }];
-  }
-  if (hasMark("underline")) {
-    phrasing = [{ type: "html", value: "<u>" }, ...phrasing, { type: "html", value: "</u>" }];
-  }
-  // Inline marks using custom syntax (html nodes are output verbatim by toMarkdown)
-  if (hasMark("subscript")) {
-    phrasing = [{ type: "html", value: "~" }, ...phrasing, { type: "html", value: "~" }];
-  }
-  if (hasMark("superscript")) {
-    phrasing = [{ type: "html", value: "^" }, ...phrasing, { type: "html", value: "^" }];
-  }
-  if (hasMark("highlight")) {
-    phrasing = [{ type: "html", value: "==" }, ...phrasing, { type: "html", value: "==" }];
-  }
-  if (hasMark("italic")) {
-    phrasing = [{ type: "emphasis", children: phrasing }];
-  }
-  if (hasMark("bold")) {
-    phrasing = [{ type: "strong", children: phrasing }];
-  }
-  const link = marks.find((m) => m.type === "link");
-  if (link) {
-    phrasing = [
-      {
-        type: "link",
-        url: String(link.attrs?.href ?? ""),
-        title: link.attrs?.title ? String(link.attrs.title) : null,
-        children: phrasing,
-      } satisfies Link,
-    ];
-  }
-  return phrasing;
 }

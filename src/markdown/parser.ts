@@ -74,7 +74,7 @@ function blockToPM(node: RootContent): PMNode {
       return tableNodeToPM(node);
 
     case "html":
-      return { type: "paragraph", content: node.value ? [{ type: "text", text: node.value }] : [] };
+      return { type: "rawHtmlBlock", attrs: { html: node.value } };
 
     default:
       return { type: "paragraph", content: [] };
@@ -259,7 +259,19 @@ function flattenSingleNode(node: PhrasingContent, inherited: PMMark[]): PMNode[]
     case "image":
       return node.alt ? [{ type: "text", text: node.alt, marks: inherited }] : [];
     case "html":
-      return node.value ? [{ type: "text", text: node.value, marks: inherited }] : [];
+      // <br> variants become hardBreak for visual line-break rendering in the editor.
+      if (/^<br\s*\/?>$/i.test(node.value.trim())) {
+        return [{ type: "hardBreak" }];
+      }
+      // All other inline HTML becomes a rawHtmlInline atom. Atoms are not text
+      // nodes, so ProseMirror cannot merge them with adjacent text, preserving
+      // the tag boundaries required for correct serialization.
+      //
+      // Inherited marks are passed through so the serializer can coalesce
+      // consecutive nodes sharing a mark (e.g. link) into a single MDAST
+      // wrapper, preserving accessibility semantics ([H<sub>2</sub>O](url)
+      // must produce one <a> element, not three).
+      return node.value ? [{ type: "rawHtmlInline", attrs: { html: node.value }, marks: inherited }] : [];
     default: {
       // Handle custom MDAST node types produced by transformInlineMarks:
       // "mark" → highlight, "superscript" → superscript, "subscript" → subscript
