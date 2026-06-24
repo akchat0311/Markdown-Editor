@@ -8,7 +8,7 @@
  * exercised by manual/integration testing.
  */
 import { describe, it, expect, beforeEach } from "vitest";
-import { detectRenames, type RenameEntry } from "@/editor/plugins/requirementIdMigrationPlugin";
+import { detectRenames } from "@/editor/plugins/requirementIdMigrationPlugin";
 import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
 import type { ReviewComment } from "@/types/reviewComment";
 

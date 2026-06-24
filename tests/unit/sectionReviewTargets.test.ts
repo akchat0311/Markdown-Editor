@@ -19,7 +19,6 @@ import {
 import { detectRenames } from "@/editor/plugins/requirementIdMigrationPlugin";
 import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
 import { collectReviewExportRows } from "@/services/reviewExportService";
-import type { ReviewComment } from "@/types/reviewComment";
 import type { OutlineNode } from "@/types/outline";
 
 function resetStore() {
