@@ -38,11 +38,15 @@ import type { RecentFile } from "@/persistence/recentFiles";
 import { ResizeHandle } from "@/layout/ResizeHandle";
 import { OutlinePanel } from "@/layout/OutlinePanel";
 import { RequirementsIndex } from "@/layout/RequirementsIndex";
+import { QualityChecksPanel } from "@/layout/QualityChecksPanel";
 import { WorkspacePanel } from "@/layout/WorkspacePanel";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useConfigStore } from "@/stores/configStore";
 import { deriveOutline, flattenOutline } from "@/editor/utils/deriveOutline";
 import { collectReviewExportRows, generateReviewCsv, downloadReviewCsv } from "@/services/reviewExportService";
+import { useDocumentValidation } from "@/editor/utils/useDocumentValidation";
+import { useValidationStore } from "@/stores/validationStore";
+import { derivePattern, buildDetectionRegex } from "@/editor/utils/requirementOps";
 
 // Module-level stable extensions prevent Tiptap compareOptions from
 // calling setOptions() synchronously during React's render phase.
@@ -95,6 +99,7 @@ export default function App() {
   const [findOpen, setFindOpen] = useState(false);
   const [findShowReplace, setFindShowReplace] = useState(false);
   const [reqIndexOpen, setReqIndexOpen] = useState(false);
+  const [qualityOpen, setQualityOpen] = useState(false);
 
   const initialDoc = parseMarkdownToDoc(activeTab?.markdown ?? "");
 
@@ -350,6 +355,47 @@ export default function App() {
   const inlineDrawerRecord: RequirementRecord | null = inlineDrawerReqId
     ? { id: inlineDrawerReqId, status: inlineDrawerStatus, section: "", pmPos: 0 }
     : null;
+
+  // ── Document validation ───────────────────────────────────────────────────────
+
+  const requirementPatternExample = useConfigStore((s) => s.requirementPattern?.example ?? null);
+  const setValidationIssues = useValidationStore((s) => s.setIssues);
+  const validationIssues = useDocumentValidation(editor, requirementPatternExample);
+  const prevIssueCountRef = useRef(0);
+
+  useEffect(() => {
+    setValidationIssues(validationIssues);
+    const orderViolations = validationIssues.filter((i) => i.type === "requirement-order");
+    // Toast only when violations appear for the first time (silence when fixed).
+    if (orderViolations.length > 0 && prevIssueCountRef.current === 0) {
+      useToastStore.getState().show(
+        `${orderViolations.length} requirement ordering issue${orderViolations.length !== 1 ? "s" : ""} detected.`,
+        "info",
+      );
+    }
+    prevIssueCountRef.current = orderViolations.length;
+  }, [validationIssues, setValidationIssues]);
+
+  // ── Quality checks navigation ────────────────────────────────────────────────
+
+  const handleQualityNavigate = useCallback(
+    (targetId: string) => {
+      if (!editor) return;
+      const { requirementPattern } = useConfigStore.getState();
+      if (!requirementPattern) return;
+      const derived = derivePattern(requirementPattern.example);
+      if (!derived) return;
+      const regex = buildDetectionRegex(derived.prefix);
+      const flat = flattenOutline(deriveOutline(editor));
+      const target = flat.find((n) => {
+        const m = n.label.match(regex);
+        return m ? derived.prefix + m[1] === targetId : false;
+      });
+      if (!target) return;
+      editor.chain().focus().setTextSelection(target.pmPos + 1).scrollIntoView().run();
+    },
+    [editor],
+  );
 
   // ── Review comments ──────────────────────────────────────────────────────────
 
@@ -901,6 +947,11 @@ export default function App() {
         setReqIndexOpen((o) => !o);
         return;
       }
+      if (e.key.toLowerCase() === "q" && e.shiftKey) {
+        e.preventDefault();
+        setQualityOpen((o) => !o);
+        return;
+      }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
@@ -934,6 +985,7 @@ export default function App() {
             )
           }
           onRequirements={() => setReqIndexOpen((o) => !o)}
+          onQualityChecks={() => setQualityOpen((o) => !o)}
         />
 
         <TabBar onRequestClose={handleRequestClose} />
@@ -1005,6 +1057,13 @@ export default function App() {
         onLoadReview={handleLoadReview}
         onSaveReview={handleSaveReview}
         onSaveReviewAs={handleSaveReviewAs}
+      />
+
+      {/* Quality Checks panel */}
+      <QualityChecksPanel
+        open={qualityOpen}
+        onClose={() => setQualityOpen(false)}
+        onNavigate={handleQualityNavigate}
       />
 
       {/* Inline comment drawer — opened by clicking badges on requirement headings */}

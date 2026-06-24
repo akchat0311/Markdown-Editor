@@ -189,6 +189,7 @@ export interface HeaderProps {
   onExportReviewsCsv?: () => void;
   onSearch?: () => void;
   onRequirements?: () => void;
+  onQualityChecks?: () => void;
 }
 
 export function Header({
@@ -204,6 +205,7 @@ export function Header({
   onExportReviewsCsv,
   onSearch,
   onRequirements,
+  onQualityChecks,
 }: HeaderProps) {
   const [exportOpen, setExportOpen] = useState(false);
   const { theme, toggleTheme, sidebarOpen, toggleSidebar } = useUIStore();
@@ -298,6 +300,21 @@ export function Header({
           </svg>
           <span>Requirements</span>
           <kbd className="rounded bg-[var(--color-border)] px-1 font-mono text-[10px]">⌘⇧R</kbd>
+        </button>
+      )}
+
+      {onQualityChecks && (
+        <button
+          className="flex h-7 shrink-0 items-center gap-2 rounded border border-[var(--color-border)] px-2 text-xs text-[var(--color-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors"
+          onClick={onQualityChecks}
+          title="Quality Checks (⌘⇧Q)"
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M6 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V9" />
+            <path d="M9 7l2 2 4-5" />
+          </svg>
+          <span>Quality</span>
+          <kbd className="rounded bg-[var(--color-border)] px-1 font-mono text-[10px]">⌘⇧Q</kbd>
         </button>
       )}
 

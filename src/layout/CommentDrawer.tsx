@@ -5,6 +5,7 @@ import { useStatusConfigStore } from "@/stores/statusConfigStore";
 import { UserNameForm } from "@/layout/UserNameForm";
 import type { CommentStatus, ReviewComment } from "@/types/reviewComment";
 import type { RequirementRecord } from "@/editor/utils/requirementOps";
+import { isSectionReviewTarget, sectionNumberFromReviewId } from "@/editor/utils/sectionReviewOps";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -566,6 +567,11 @@ export function CommentDrawer({ record, onClose }: CommentDrawerProps) {
 
   if (!record || !reqId) return null;
 
+  const isSectionTarget = isSectionReviewTarget(reqId);
+  const displayId = isSectionTarget
+    ? `§${sectionNumberFromReviewId(reqId) ?? reqId}`
+    : reqId;
+
   const openCount = comments.filter((c) => c.status === "open").length;
   const respondedCount = comments.filter((c) => c.status === "responded").length;
   const closedCount = comments.filter((c) => c.status === "closed").length;
@@ -582,11 +588,11 @@ export function CommentDrawer({ record, onClose }: CommentDrawerProps) {
 
   return (
     <div className="flex w-80 shrink-0 flex-col border-l border-[var(--color-border)]">
-      {/* Header: req ID + status + close button */}
+      {/* Header: req ID / section number + status chip (req only) + close button */}
       <div className="flex items-start justify-between border-b border-[var(--color-border)] px-4 py-3">
         <div className="flex flex-col gap-1">
-          <span className="font-mono text-sm font-semibold text-[var(--color-text)]">{reqId}</span>
-          <ReqStatusChip status={record.status} />
+          <span className="font-mono text-sm font-semibold text-[var(--color-text)]">{displayId}</span>
+          {!isSectionTarget && <ReqStatusChip status={record.status} />}
           {comments.length > 0 && (
             <p className="text-[10px] text-[var(--color-muted)]">
               {comments.length} comment{comments.length !== 1 ? "s" : ""}

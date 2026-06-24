@@ -41,9 +41,12 @@ import {
   type RequirementAnalysis,
 } from "@/editor/utils/requirementOps";
 import { rewriteHeadingId } from "@/editor/utils/requirementHeadingOps";
+import { requirementIdMigrationKey } from "@/editor/plugins/requirementIdMigrationPlugin";
 import { useConfigStore } from "@/stores/configStore";
 import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
+import { useValidationStore } from "@/stores/validationStore";
 import type { OutlineNode } from "@/types/outline";
+import type { ValidationIssue } from "@/types/validation";
 
 const DEBOUNCE_MS = 150;
 const PATTERN_APPLY_MS = 500;
@@ -537,6 +540,7 @@ function PatternConfigPanel({
 
 interface IssueSummaryStripProps {
   analysis: RequirementAnalysis;
+  orderIssues: ValidationIssue[];
   issueListOpen: boolean;
   onToggle: () => void;
   onNavigate: (node: OutlineNode) => void;
@@ -546,6 +550,7 @@ interface IssueSummaryStripProps {
 
 function IssueSummaryStrip({
   analysis,
+  orderIssues,
   issueListOpen,
   onToggle,
   onNavigate,
@@ -554,12 +559,15 @@ function IssueSummaryStrip({
 }: IssueSummaryStripProps) {
   const dupCount = analysis.duplicates.size;
   const missingCount = analysis.missing.length;
-  if (dupCount === 0 && missingCount === 0) return null;
+  const orderCount = orderIssues.length;
+  if (dupCount === 0 && missingCount === 0 && orderCount === 0) return null;
 
   const parts: string[] = [];
   if (dupCount > 0) parts.push(`${dupCount} duplicate${dupCount > 1 ? "s" : ""}`);
   if (missingCount > 0)
     parts.push(`${missingCount} missing ID${missingCount > 1 ? "s" : ""}`);
+  if (orderCount > 0)
+    parts.push(`${orderCount} out of order`);
 
   return (
     <div className="shrink-0 border-b border-[var(--color-border)]">
@@ -593,13 +601,15 @@ function IssueSummaryStrip({
           </svg>
         </button>
 
-        <button
-          onClick={onRenumber}
-          title="Renumber all requirements sequentially"
-          className="shrink-0 rounded bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-600 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
-        >
-          Renumber
-        </button>
+        {(dupCount > 0 || missingCount > 0) && (
+          <button
+            onClick={onRenumber}
+            title="Renumber all requirements sequentially"
+            className="shrink-0 rounded bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-600 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
+          >
+            Renumber
+          </button>
+        )}
       </div>
 
       {/* Issue detail */}
@@ -639,7 +649,7 @@ function IssueSummaryStrip({
 
           {/* Missing */}
           {missingCount > 0 && (
-            <div>
+            <div className={orderCount > 0 ? "mb-2" : ""}>
               <p className="mb-1 text-[9px] font-semibold uppercase tracking-widest text-[var(--color-muted)]">
                 Missing IDs
               </p>
@@ -653,6 +663,33 @@ function IssueSummaryStrip({
                   </span>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Out of order */}
+          {orderCount > 0 && (
+            <div>
+              <p className="mb-1 text-[9px] font-semibold uppercase tracking-widest text-[var(--color-muted)]">
+                Out of Order
+              </p>
+              {orderIssues.map((issue) => {
+                const node = issue.targetId
+                  ? analysis.requirements.find((r) => r.id === issue.targetId)?.node
+                  : undefined;
+                return (
+                  <button
+                    key={issue.id}
+                    onClick={() => node && onNavigate(node)}
+                    disabled={!node}
+                    title={node ? `Navigate to ${issue.targetId}` : issue.message}
+                    className="flex w-full items-center gap-1.5 rounded-sm px-1 py-0.5 text-left transition-colors hover:bg-amber-50 disabled:cursor-default disabled:opacity-60 dark:hover:bg-amber-950/20"
+                  >
+                    <span className="flex-1 font-mono text-[10px] text-amber-600 dark:text-amber-400">
+                      {issue.targetId}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
@@ -1719,6 +1756,8 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
 
     const { state } = editor;
     let tr = state.tr;
+    // Suppress the migration plugin — we handle comment migration below directly.
+    tr.setMeta(requirementIdMigrationKey, { skip: true });
 
     // Apply in reverse document order (highest pmPos first) so that each
     // replacement doesn't shift the absolute positions used by subsequent steps.
@@ -1751,17 +1790,27 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
       const node = state.doc.nodeAt(target.pmPos);
       if (!node || node.type.name !== "heading") return;
       const tr = state.tr;
+      // Suppress migration: the duplicate is being given a fresh ID; the original
+      // ID still exists in the document (first occurrence) and should keep its comments.
+      tr.setMeta(requirementIdMigrationKey, { skip: true });
       rewriteHeadingId(tr, target.pmPos, id, newId);
       editor.view.dispatch(tr);
     },
     [editor, derivedPattern, analysis]
   );
 
+  // ── Validation issues (ordering) ────────────────────────────────────────────
+  const allValidationIssues = useValidationStore((s) => s.issues);
+  const orderIssues = useMemo(
+    () => allValidationIssues.filter((i) => i.type === "requirement-order"),
+    [allValidationIssues],
+  );
+
   // ── Render ──────────────────────────────────────────────────────────────────
   const hasParentNodes = flatOutline.some((n) => n.children.length > 0);
   const hasIssues =
     analysis !== null &&
-    (analysis.duplicates.size > 0 || analysis.missing.length > 0);
+    (analysis.duplicates.size > 0 || analysis.missing.length > 0 || orderIssues.length > 0);
 
   return (
     <>
@@ -1918,6 +1967,7 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
         {hasIssues && (
           <IssueSummaryStrip
             analysis={analysis!}
+            orderIssues={orderIssues}
             issueListOpen={issueListOpen}
             onToggle={() => setIssueListOpen((o) => !o)}
             onNavigate={handleSelect}

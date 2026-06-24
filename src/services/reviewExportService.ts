@@ -8,6 +8,11 @@ import {
 } from "@/editor/utils/requirementOps";
 import { getNodeSectionRange } from "@/editor/utils/outlineOps";
 import { resolveRequirementStatus } from "@/services/requirementStatusService";
+import {
+  extractSectionNumber,
+  sectionReviewId,
+  isSectionReviewTarget,
+} from "@/editor/utils/sectionReviewOps";
 
 // ── Row model ─────────────────────────────────────────────────────────────────
 // One row per review comment. Future export formats (Excel, HTML, PDF) should
@@ -97,13 +102,29 @@ export function collectReviewExportRows(
     }
   }
 
+  // Build section metadata lookup: sectionReviewId → heading text as title.
+  // First occurrence wins when duplicate section numbers exist.
+  const sectionMeta = new Map<string, { bodyText: string }>();
+  for (const node of flat) {
+    const sectionNum = extractSectionNumber(node.label);
+    if (!sectionNum) continue;
+    const targetId = sectionReviewId(sectionNum);
+    if (!sectionMeta.has(targetId)) {
+      sectionMeta.set(targetId, { bodyText: node.label });
+    }
+  }
+
   const rows: ReviewExportRow[] = [];
 
   for (const [reqId, value] of Object.entries(commentsData)) {
     if (reqId.startsWith("_")) continue;
     if (!Array.isArray(value)) continue;
 
-    const meta = reqMeta.get(reqId);
+    const meta = isSectionReviewTarget(reqId)
+      ? sectionMeta.get(reqId)
+        ? { statusLabel: "", bodyText: sectionMeta.get(reqId)!.bodyText }
+        : undefined
+      : reqMeta.get(reqId);
     const comments = value as ReviewComment[];
 
     for (const comment of comments) {

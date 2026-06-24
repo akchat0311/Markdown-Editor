@@ -19,6 +19,7 @@ import { Subscript } from "./Subscript";
 import { TableAlignment } from "./TableAlignment";
 import { RequirementStatus } from "./RequirementStatus";
 import { ReviewCommentBadge } from "./ReviewCommentBadge";
+import { RequirementIdMigration } from "./RequirementIdMigration";
 import { LinkNavigation } from "./LinkNavigation";
 import { findReplacePlugin } from "@/editor/plugins/findReplace";
 
@@ -59,6 +60,7 @@ export function createEditorExtensions(): Extensions {
     FindReplaceExtension,
     RequirementStatus,
     ReviewCommentBadge,
+    RequirementIdMigration,
     LinkNavigation,
   ];
 }

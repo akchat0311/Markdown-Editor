@@ -51,6 +51,15 @@ interface ReviewCommentsState {
   reopenComment(reqId: string, commentId: string): void;
 
   renumberComments(oldId: string, newId: string): void;
+
+  /**
+   * Safely migrates review comments when a review target ID is renamed.
+   *
+   * - "migrated": comments moved from oldId to newId (safe rename)
+   * - "conflict": newId already has comments; migration blocked to prevent data loss
+   * - "noop": oldId had no comments; nothing to migrate
+   */
+  migrateReviewTarget(oldId: string, newId: string): "migrated" | "conflict" | "noop";
 }
 
 export const useReviewCommentsStore = create<ReviewCommentsState>((set, get) => ({
@@ -180,5 +189,20 @@ export const useReviewCommentsStore = create<ReviewCommentsState>((set, get) => 
         isDirty: true,
       };
     });
+  },
+
+  migrateReviewTarget(oldId, newId) {
+    const s = get();
+    const oldComments = s.comments[oldId] as ReviewComment[] | undefined;
+    if (!oldComments || oldComments.length === 0) return "noop";
+
+    const newComments = s.comments[newId] as ReviewComment[] | undefined;
+    if (newComments && newComments.length > 0) return "conflict";
+
+    set((current) => {
+      const { [oldId]: moved, ...rest } = current.comments;
+      return { comments: { ...rest, [newId]: moved }, isDirty: true };
+    });
+    return "migrated";
   },
 }));

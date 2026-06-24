@@ -7,6 +7,7 @@ import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
 import { useCommentDrawerStore } from "@/stores/commentDrawerStore";
 import { getRequirementStatuses, resolveRequirementStatus } from "@/services/requirementStatusService";
 import { derivePattern, buildDetectionRegex } from "@/editor/utils/requirementOps";
+import { extractSectionNumber, sectionReviewId } from "@/editor/utils/sectionReviewOps";
 import type { ReviewComment } from "@/types/reviewComment";
 
 export const reviewCommentBadgeKey = new PluginKey<DecorationSet>("reviewCommentBadge");
@@ -101,57 +102,79 @@ function createBadgeWidget(
 
 // ── Decoration builder ────────────────────────────────────────────────────────
 
-function buildDecorations(state: EditorState): DecorationSet {
+function buildDecorations(editorState: EditorState): DecorationSet {
   const { requirementPattern } = useConfigStore.getState();
-  if (!requirementPattern) return DecorationSet.empty;
-
-  const derived = derivePattern(requirementPattern.example);
-  if (!derived) return DecorationSet.empty;
-
-  const { prefix } = derived;
-  const regex = buildDetectionRegex(prefix);
   const comments = useReviewCommentsStore.getState().comments;
   const statuses = getRequirementStatuses();
   const decorations: Decoration[] = [];
 
-  function processHeading(node: PMNode, nodePos: number) {
-    const text = node.textContent;
-    if (!regex.test(text)) return;
-
-    // Parse requirement ID from the heading text.
-    const idMatch = text.match(regex);
-    if (!idMatch) return;
-    const reqId = prefix + idMatch[1];
-
-    // Resolve the status ID for the drawer header.
-    const bracketMatch = text.match(/(\[[^\]]+\])\s*$/);
-    const rawStatus = bracketMatch ? bracketMatch[1].slice(1, -1).trim() : "";
-    const statusId = rawStatus
-      ? resolveRequirementStatus(rawStatus, statuses)
-      : "unknown";
-
-    const reqComments = (comments[reqId] as ReviewComment[]) ?? [];
-    const state = badgeState(reqComments);
-
-    // Badge position:
-    //   WITH status bracket → at bracketTo (side: 1), after the hidden [Status] span
-    //   WITHOUT status bracket → at heading end (side: 2), after the "Set Status" widget (side: 1)
-    const badgePos = bracketMatch
-      ? nodePos + 1 + text.lastIndexOf(bracketMatch[1]) + bracketMatch[1].length
-      : nodePos + 1 + text.length;
-    const badgeSide = bracketMatch ? 1 : 2;
-
-    decorations.push(
-      Decoration.widget(badgePos, createBadgeWidget(reqId, statusId, reqComments), {
-        side: badgeSide,
-        // Key encodes badge state so PM recreates DOM when the urgency level changes.
-        key: `rcb-${nodePos}-${state}-${reqComments.length}-${statusId}`,
-        stopEvent: () => true,
-      }),
-    );
+  // Pre-derive requirement pattern so processHeading can check it in one pass.
+  let reqRegex: RegExp | null = null;
+  let reqPrefix = "";
+  if (requirementPattern) {
+    const derived = derivePattern(requirementPattern.example);
+    if (derived) {
+      reqPrefix = derived.prefix;
+      reqRegex = buildDetectionRegex(reqPrefix);
+    }
   }
 
-  state.doc.forEach((node, offset) => {
+  // Single traversal: each heading tries requirement badge first, then section badge.
+  // This guarantees decorations are emitted in document order.
+  function processHeading(node: PMNode, nodePos: number) {
+    const text = node.textContent;
+
+    // ── Requirement badge (takes priority over section badge) ─────────────────
+    if (reqRegex) {
+      const idMatch = text.match(reqRegex);
+      if (idMatch) {
+        const reqId = reqPrefix + idMatch[1];
+        const bracketMatch = text.match(/(\[[^\]]+\])\s*$/);
+        const rawStatus = bracketMatch ? bracketMatch[1].slice(1, -1).trim() : "";
+        const statusId = rawStatus
+          ? resolveRequirementStatus(rawStatus, statuses)
+          : "unknown";
+        const reqComments = (comments[reqId] as ReviewComment[]) ?? [];
+        const bState = badgeState(reqComments);
+        // Badge position:
+        //   WITH status bracket → after the hidden [Status] span (side: 1)
+        //   WITHOUT status bracket → after the "Set Status" widget (side: 2)
+        const badgePos = bracketMatch
+          ? nodePos + 1 + text.lastIndexOf(bracketMatch[1]) + bracketMatch[1].length
+          : nodePos + 1 + text.length;
+        const badgeSide = bracketMatch ? 1 : 2;
+        decorations.push(
+          Decoration.widget(badgePos, createBadgeWidget(reqId, statusId, reqComments), {
+            side: badgeSide,
+            key: `rcb-${nodePos}-${bState}-${reqComments.length}-${statusId}`,
+            stopEvent: () => true,
+          }),
+        );
+        return;
+      }
+    }
+
+    // ── Section badge ─────────────────────────────────────────────────────────
+    const sectionNum = extractSectionNumber(text);
+    if (sectionNum) {
+      const targetId = sectionReviewId(sectionNum);
+      const sectionComments = (comments[targetId] as ReviewComment[]) ?? [];
+      const bState = badgeState(sectionComments);
+      decorations.push(
+        Decoration.widget(
+          nodePos + 1 + text.length,
+          createBadgeWidget(targetId, "unknown", sectionComments),
+          {
+            side: 1,
+            key: `scb-${nodePos}-${bState}-${sectionComments.length}`,
+            stopEvent: () => true,
+          },
+        ),
+      );
+    }
+  }
+
+  editorState.doc.forEach((node, offset) => {
     if (node.type.name === "heading") {
       processHeading(node, offset);
     } else if (node.type.name === "blockquote" || node.type.name === "callout") {
@@ -163,7 +186,7 @@ function buildDecorations(state: EditorState): DecorationSet {
     }
   });
 
-  return DecorationSet.create(state.doc, decorations);
+  return DecorationSet.create(editorState.doc, decorations);
 }
 
 // ── Plugin ────────────────────────────────────────────────────────────────────
