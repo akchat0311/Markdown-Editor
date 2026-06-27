@@ -27,8 +27,8 @@ const TABS: readonly { id: TabId; label: string }[] = [
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 export interface DashboardProps {
-  open: boolean;
-  onClose: () => void;
+  /** Called when user navigates to a position — switches workspace to editor and scrolls. */
+  onNavigateToEditor: (pmPos: number) => void;
   onLoadReview: () => void;
   onSaveReview: () => void;
   onSaveReviewAs: () => void;
@@ -39,8 +39,7 @@ export interface DashboardProps {
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
 export function Dashboard({
-  open,
-  onClose,
+  onNavigateToEditor,
   onLoadReview,
   onSaveReview,
   onSaveReviewAs,
@@ -52,43 +51,17 @@ export function Dashboard({
   const [activeTab, setActiveTab] = useState<TabId>(initialTab ?? "overview");
   const [selectedRecord, setSelectedRecord] = useState<RequirementRecord | null>(null);
 
-  // Reset state when dashboard opens
-  useEffect(() => {
-    if (open) {
-      setActiveTab(initialTab ?? "overview");
-      setSelectedRecord(null);
-    }
-  }, [open, initialTab]);
-
   // Close drawer when switching away from Requirements tab
   useEffect(() => {
     if (activeTab !== "requirements") setSelectedRecord(null);
   }, [activeTab]);
 
-  // Escape key closes the dashboard (not just the drawer)
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (selectedRecord) {
-          setSelectedRecord(null);
-        } else {
-          onClose();
-        }
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose, selectedRecord]);
-
-  // Navigate to a PM position and close the dashboard
+  // Navigate to a PM position and switch to editor workspace
   const handleNavigate = useCallback(
     (pmPos: number) => {
-      if (!editor) return;
-      editor.chain().focus().setTextSelection(pmPos + 1).scrollIntoView().run();
-      onClose();
+      onNavigateToEditor(pmPos);
     },
-    [editor, onClose],
+    [onNavigateToEditor],
   );
 
   // Navigate to a requirement by targetId (used by Insights tab)
@@ -105,99 +78,61 @@ export function Dashboard({
         return m ? derived.prefix + m[1] === targetId : false;
       });
       if (!target) return;
-      editor.chain().focus().setTextSelection(target.pmPos + 1).scrollIntoView().run();
-      onClose();
+      onNavigateToEditor(target.pmPos);
     },
-    [editor, onClose, requirementPattern],
+    [editor, onNavigateToEditor, requirementPattern],
   );
-
-  if (!open) return null;
-
-  const hasDrawer = selectedRecord !== null;
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-[6vh] backdrop-blur-sm"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-      aria-modal="true"
-      role="dialog"
+      className="flex min-h-0 flex-1 flex-col bg-[var(--color-page-bg)]"
+      role="main"
       aria-label="Dashboard"
     >
-      <div
-        className={[
-          "flex min-h-0 flex-row rounded-xl border border-[var(--color-border)] bg-[var(--color-paper)] shadow-2xl transition-all duration-150",
-          hasDrawer ? "w-full max-w-5xl" : "w-full max-w-4xl",
-        ].join(" ")}
-        style={{ maxHeight: "84vh" }}
-      >
-        {/* ── Main panel ── */}
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          {/* Header: title + tab bar + close */}
-          <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-border)] px-4 py-0">
-            <div className="flex items-center gap-0">
-              {/* Tab bar */}
-              {TABS.map((tab) => (
-                <button
-                  key={tab.id}
-                  data-testid={`tab-${tab.id}`}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={[
-                    "relative px-4 py-3 text-sm font-medium transition-colors",
-                    activeTab === tab.id
-                      ? "text-[var(--color-text)] after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-[var(--color-accent)]"
-                      : "text-[var(--color-muted)] hover:text-[var(--color-text)]",
-                  ].join(" ")}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-            <button
-              onClick={onClose}
-              className="ml-4 flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--color-muted)] transition-colors hover:bg-[var(--color-border)] hover:text-[var(--color-text)]"
-              aria-label="Close Dashboard"
-            >
-              <svg
-                width="10"
-                height="10"
-                viewBox="0 0 10 10"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-              >
-                <path d="M1 1l8 8M9 1L1 9" />
-              </svg>
-            </button>
-          </div>
+      {/* Tab bar */}
+      <div className="flex shrink-0 items-center gap-0 border-b border-[var(--color-border)] px-4">
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            data-testid={`tab-${tab.id}`}
+            onClick={() => setActiveTab(tab.id)}
+            className={[
+              "relative px-4 py-3 text-sm font-medium transition-colors",
+              activeTab === tab.id
+                ? "text-[var(--color-text)] after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-[var(--color-accent)]"
+                : "text-[var(--color-muted)] hover:text-[var(--color-text)]",
+            ].join(" ")}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-          {/* Tab content */}
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            {activeTab === "overview" && (
-              <OverviewTab onSwitchTab={setActiveTab} />
-            )}
-            {activeTab === "requirements" && (
-              <RequirementsTab
-                onNavigate={handleNavigate}
-                onLoadReview={onLoadReview}
-                onSaveReview={onSaveReview}
-                onSaveReviewAs={onSaveReviewAs}
-                selectedRecord={selectedRecord}
-                onSelectRecord={setSelectedRecord}
-              />
-            )}
-            {activeTab === "reviews" && (
-              <ReviewsTab onNavigate={handleNavigate} />
-            )}
-            {activeTab === "insights" && (
-              <InsightsTab onNavigateByTargetId={handleNavigateByTargetId} />
-            )}
-          </div>
+      {/* Content area: tab content + optional comment drawer side panel */}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {activeTab === "overview" && (
+            <OverviewTab onSwitchTab={setActiveTab} />
+          )}
+          {activeTab === "requirements" && (
+            <RequirementsTab
+              onNavigate={handleNavigate}
+              onLoadReview={onLoadReview}
+              onSaveReview={onSaveReview}
+              onSaveReviewAs={onSaveReviewAs}
+              selectedRecord={selectedRecord}
+              onSelectRecord={setSelectedRecord}
+            />
+          )}
+          {activeTab === "reviews" && (
+            <ReviewsTab onNavigate={handleNavigate} />
+          )}
+          {activeTab === "insights" && (
+            <InsightsTab onNavigateByTargetId={handleNavigateByTargetId} />
+          )}
         </div>
 
-        {/* ── Comment drawer (right panel, shared) ── */}
+        {/* CommentDrawer as right panel — no fixed positioning */}
         <CommentDrawer
           record={selectedRecord}
           onClose={() => setSelectedRecord(null)}

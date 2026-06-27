@@ -97,7 +97,7 @@ export default function App() {
   } | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findShowReplace, setFindShowReplace] = useState(false);
-  const [dashboardOpen, setDashboardOpen] = useState(false);
+  const [activeWorkspace, setActiveWorkspace] = useState<"editor" | "dashboard">("editor");
 
   const initialDoc = parseMarkdownToDoc(activeTab?.markdown ?? "");
 
@@ -351,7 +351,7 @@ export default function App() {
   const closeInlineDrawer = useCommentDrawerStore((s) => s.close);
 
   const inlineDrawerRecord: RequirementRecord | null = inlineDrawerReqId
-    ? { id: inlineDrawerReqId, status: inlineDrawerStatus, section: "", pmPos: 0 }
+    ? { id: inlineDrawerReqId, status: inlineDrawerStatus, section: "", pmPos: 0, title: "" }
     : null;
 
   // ── Document validation ───────────────────────────────────────────────────────
@@ -924,13 +924,26 @@ export default function App() {
       }
       if (e.key.toLowerCase() === "d" && e.shiftKey) {
         e.preventDefault();
-        setDashboardOpen((o) => !o);
+        setActiveWorkspace((w) => w === "editor" ? "dashboard" : "editor");
         return;
       }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
+
+  // ── Dashboard navigation ─────────────────────────────────────────────────────
+
+  const handleDashboardNavigate = useCallback(
+    (pmPos: number) => {
+      setActiveWorkspace("editor");
+      if (!editor) return;
+      setTimeout(() => {
+        editor.chain().focus().setTextSelection(pmPos + 1).scrollIntoView().run();
+      }, 50);
+    },
+    [editor],
+  );
 
   // Apply theme class to <html>
   useEffect(() => {
@@ -959,7 +972,8 @@ export default function App() {
               new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true })
             )
           }
-          onDashboard={() => setDashboardOpen((o) => !o)}
+          activeWorkspace={activeWorkspace}
+          onSwitchWorkspace={setActiveWorkspace}
         />
 
         <TabBar onRequestClose={handleRequestClose} />
@@ -997,41 +1011,43 @@ export default function App() {
         )}
 
         <div className="flex min-h-0 flex-1">
-          {sidebarOpen && (
+          {activeWorkspace === "editor" ? (
             <>
-              <div className="flex shrink-0 flex-col overflow-hidden" style={{ width: sidebarWidth }}>
-                {workspace.dirHandle && (
-                  <WorkspacePanel
-                    onOpenFile={handleOpenFromWorkspace}
-                    onOpenFolder={handleOpenFolder}
-                  />
-                )}
-                <OutlinePanel width={sidebarWidth} noWidthStyle />
+              {sidebarOpen && (
+                <>
+                  <div className="flex shrink-0 flex-col overflow-hidden" style={{ width: sidebarWidth }}>
+                    {workspace.dirHandle && (
+                      <WorkspacePanel
+                        onOpenFile={handleOpenFromWorkspace}
+                        onOpenFolder={handleOpenFolder}
+                      />
+                    )}
+                    <OutlinePanel width={sidebarWidth} noWidthStyle />
+                  </div>
+                  <ResizeHandle onDelta={adjustSidebar} />
+                </>
+              )}
+              <div className="relative flex flex-1 min-w-0">
+                <EditorMain />
+                <FindReplaceBar
+                  open={findOpen}
+                  showReplace={findShowReplace}
+                  onClose={() => setFindOpen(false)}
+                />
               </div>
-              <ResizeHandle onDelta={adjustSidebar} />
             </>
-          )}
-          <div className="relative flex flex-1 min-w-0">
-            <EditorMain />
-            <FindReplaceBar
-              open={findOpen}
-              showReplace={findShowReplace}
-              onClose={() => setFindOpen(false)}
+          ) : (
+            <Dashboard
+              onNavigateToEditor={handleDashboardNavigate}
+              onLoadReview={handleLoadReview}
+              onSaveReview={handleSaveReview}
+              onSaveReviewAs={handleSaveReviewAs}
             />
-          </div>
+          )}
         </div>
 
         <StatusBar onSaveReview={handleSaveReview} onSaveReviewAs={handleSaveReviewAs} />
       </div>
-
-      {/* Unified Dashboard */}
-      <Dashboard
-        open={dashboardOpen}
-        onClose={() => setDashboardOpen(false)}
-        onLoadReview={handleLoadReview}
-        onSaveReview={handleSaveReview}
-        onSaveReviewAs={handleSaveReviewAs}
-      />
 
       {/* Inline comment drawer — opened by clicking badges on requirement headings */}
       {inlineDrawerRecord && (

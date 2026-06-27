@@ -205,37 +205,28 @@ export function OverviewTab({ onSwitchTab }: OverviewTabProps) {
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4" data-testid="overview-tab">
-      {/* ── Primary stats grid ── */}
-      <div className="grid grid-cols-4 gap-3" data-testid="stat-grid">
-        <StatCard
-          label="Requirements"
-          value={index?.total ?? 0}
-          onClick={() => onSwitchTab("requirements")}
-          testId="stat-requirements"
-        />
-        <StatCard
-          label="Sections"
-          value={sectionCount}
-          testId="stat-sections"
-        />
-        <StatCard
-          label="Comments"
-          value={commentTotals.total}
-          onClick={commentTotals.total > 0 ? () => onSwitchTab("reviews") : undefined}
-          testId="stat-comments"
-        />
-        <StatCard
-          label="Issues"
-          value={issues.length}
-          accent={issues.length > 0 ? "text-red-600 dark:text-red-400" : undefined}
-          onClick={issues.length > 0 ? () => onSwitchTab("insights") : undefined}
-          testId="stat-issues"
-        />
+      {/* ── Needs attention ── */}
+      <div className="mb-5" data-testid="needs-attention">
+        <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-[var(--color-muted)]">
+          Needs Attention
+        </p>
+        {attentionItems.length === 0 ? (
+          <div className="flex items-center gap-2 rounded-lg border border-[var(--color-border)] px-3 py-3 text-sm text-green-600 dark:text-green-400" data-testid="all-clear">
+            <span aria-hidden="true">✓</span>
+            <span>Everything looks good</span>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {attentionItems.map((item, i) => (
+              <AttentionRow key={i} item={item} onSwitchTab={onSwitchTab} />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ── Comment breakdown ── */}
       {commentTotals.total > 0 && (
-        <div className="mt-3 grid grid-cols-3 gap-3">
+        <div className="mb-4 grid grid-cols-3 gap-3">
           <StatCard
             label="Open"
             value={commentTotals.open}
@@ -262,7 +253,7 @@ export function OverviewTab({ onSwitchTab }: OverviewTabProps) {
 
       {/* ── Requirement status distribution ── */}
       {distributionItems.length > 0 && (
-        <div className="mt-4" data-testid="status-distribution">
+        <div className="mb-4" data-testid="status-distribution">
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-[var(--color-muted)]">
             Requirement Status
           </p>
@@ -282,23 +273,32 @@ export function OverviewTab({ onSwitchTab }: OverviewTabProps) {
         </div>
       )}
 
-      {/* ── Needs attention ── */}
-      <div className="mt-5" data-testid="needs-attention">
-        <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-[var(--color-muted)]">
-          Needs Attention
-        </p>
-        {attentionItems.length === 0 ? (
-          <div className="flex items-center gap-2 rounded-lg border border-[var(--color-border)] px-3 py-3 text-sm text-green-600 dark:text-green-400" data-testid="all-clear">
-            <span aria-hidden="true">✓</span>
-            <span>Everything looks good</span>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {attentionItems.map((item, i) => (
-              <AttentionRow key={i} item={item} onSwitchTab={onSwitchTab} />
-            ))}
-          </div>
-        )}
+      {/* ── Primary stats grid ── */}
+      <div className="grid grid-cols-4 gap-3" data-testid="stat-grid">
+        <StatCard
+          label="Requirements"
+          value={index?.total ?? 0}
+          onClick={() => onSwitchTab("requirements")}
+          testId="stat-requirements"
+        />
+        <StatCard
+          label="Sections"
+          value={sectionCount}
+          testId="stat-sections"
+        />
+        <StatCard
+          label="Comments"
+          value={commentTotals.total}
+          onClick={commentTotals.total > 0 ? () => onSwitchTab("reviews") : undefined}
+          testId="stat-comments"
+        />
+        <StatCard
+          label="Issues"
+          value={issues.length}
+          accent={issues.length > 0 ? "text-red-600 dark:text-red-400" : undefined}
+          onClick={issues.length > 0 ? () => onSwitchTab("insights") : undefined}
+          testId="stat-issues"
+        />
       </div>
 
       {/* ── No pattern hint ── */}

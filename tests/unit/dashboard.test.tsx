@@ -1,10 +1,9 @@
 /**
- * Tests for the unified Dashboard component.
+ * Tests for the unified Dashboard component (full-page workspace).
  *
  * Covers:
- * - Visibility (open/closed)
+ * - Visibility (always mounted)
  * - Tab switching
- * - Escape and backdrop close
  * - Insights tab content (issue rendering, empty state)
  * - Reviews tab content (overview cards, table, filters)
  * - Overview tab (stat cards, needs-attention section)
@@ -60,19 +59,15 @@ function resetStores() {
 
 function renderDashboard(
   props: Partial<{
-    open: boolean;
-    onClose: () => void;
+    onNavigateToEditor: (pmPos: number) => void;
     onLoadReview: () => void;
     onSaveReview: () => void;
     onSaveReviewAs: () => void;
   }> = {},
 ) {
-  const open = props.open ?? true;
-  const onClose = props.onClose ?? vi.fn();
   return render(
     <Dashboard
-      open={open}
-      onClose={onClose}
+      onNavigateToEditor={props.onNavigateToEditor ?? vi.fn()}
       onLoadReview={props.onLoadReview ?? vi.fn()}
       onSaveReview={props.onSaveReview ?? vi.fn()}
       onSaveReviewAs={props.onSaveReviewAs ?? vi.fn()}
@@ -85,19 +80,14 @@ function renderDashboard(
 describe("Dashboard — visibility", () => {
   beforeEach(resetStores);
 
-  it("renders nothing when open=false", () => {
-    renderDashboard({ open: false });
-    expect(screen.queryByRole("dialog")).toBeNull();
-  });
-
-  it("renders the dialog when open=true", () => {
+  it("renders when mounted", () => {
     renderDashboard();
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("main")).toBeInTheDocument();
   });
 
   it("has the correct aria-label", () => {
     renderDashboard();
-    expect(screen.getByRole("dialog")).toHaveAttribute("aria-label", "Dashboard");
+    expect(screen.getByRole("main")).toHaveAttribute("aria-label", "Dashboard");
   });
 });
 
@@ -144,42 +134,6 @@ describe("Dashboard — tab bar", () => {
     fireEvent.click(screen.getByTestId("tab-requirements"));
     expect(screen.queryByTestId("overview-tab")).toBeNull();
     expect(screen.getByTestId("requirements-tab")).toBeInTheDocument();
-  });
-});
-
-// ── Close behaviours ──────────────────────────────────────────────────────────
-
-describe("Dashboard — close behaviours", () => {
-  beforeEach(resetStores);
-
-  it("calls onClose when × button is clicked", () => {
-    const onClose = vi.fn();
-    renderDashboard({ onClose });
-    fireEvent.click(screen.getByRole("button", { name: "Close Dashboard" }));
-    expect(onClose).toHaveBeenCalled();
-  });
-
-  it("calls onClose on Escape key", () => {
-    const onClose = vi.fn();
-    renderDashboard({ onClose });
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(onClose).toHaveBeenCalled();
-  });
-
-  it("calls onClose on backdrop mousedown", () => {
-    const onClose = vi.fn();
-    renderDashboard({ onClose });
-    const dialog = screen.getByRole("dialog");
-    fireEvent.mouseDown(dialog);
-    expect(onClose).toHaveBeenCalled();
-  });
-
-  it("does not call onClose when clicking inside the dialog content", () => {
-    const onClose = vi.fn();
-    renderDashboard({ onClose });
-    // Click a tab button — should not close
-    fireEvent.click(screen.getByTestId("tab-requirements"));
-    expect(onClose).not.toHaveBeenCalled();
   });
 });
 

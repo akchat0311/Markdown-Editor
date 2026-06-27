@@ -188,7 +188,8 @@ export interface HeaderProps {
   onExportMarkdown?: () => void;
   onExportReviewsCsv?: () => void;
   onSearch?: () => void;
-  onDashboard?: () => void;
+  activeWorkspace?: "editor" | "dashboard";
+  onSwitchWorkspace?: (w: "editor" | "dashboard") => void;
 }
 
 export function Header({
@@ -203,7 +204,8 @@ export function Header({
   onExportMarkdown,
   onExportReviewsCsv,
   onSearch,
-  onDashboard,
+  activeWorkspace,
+  onSwitchWorkspace,
 }: HeaderProps) {
   const [exportOpen, setExportOpen] = useState(false);
   const { theme, toggleTheme, sidebarOpen, toggleSidebar } = useUIStore();
@@ -286,21 +288,24 @@ export function Header({
         <kbd className="rounded bg-[var(--color-border)] px-1 font-mono text-[10px]">⌘K</kbd>
       </button>
 
-      {onDashboard && (
-        <button
-          className="flex h-7 shrink-0 items-center gap-2 rounded border border-[var(--color-border)] px-2 text-xs text-[var(--color-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors"
-          onClick={onDashboard}
-          title="Dashboard (⌘⇧D)"
-        >
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="1" y="1" width="6" height="6" rx="1" />
-            <rect x="9" y="1" width="6" height="6" rx="1" />
-            <rect x="1" y="9" width="6" height="6" rx="1" />
-            <rect x="9" y="9" width="6" height="6" rx="1" />
-          </svg>
-          <span>Dashboard</span>
-          <kbd className="rounded bg-[var(--color-border)] px-1 font-mono text-[10px]">⌘⇧D</kbd>
-        </button>
+      {onSwitchWorkspace && (
+        <div className="flex items-center rounded border border-[var(--color-border)] text-xs">
+          {(["editor", "dashboard"] as const).map((mode) => (
+            <button
+              key={mode}
+              onClick={() => onSwitchWorkspace(mode)}
+              className={[
+                "h-7 px-3 capitalize transition-colors first:rounded-l last:rounded-r",
+                activeWorkspace === mode
+                  ? "bg-[var(--color-accent)] font-medium text-white"
+                  : "text-[var(--color-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]",
+              ].join(" ")}
+              title={mode === "dashboard" ? "Dashboard (⌘⇧D)" : "Editor"}
+            >
+              {mode === "editor" ? "Editor" : "Dashboard"}
+            </button>
+          ))}
+        </div>
       )}
 
       <div className="mx-1 h-5 w-px bg-[var(--color-border)]" />

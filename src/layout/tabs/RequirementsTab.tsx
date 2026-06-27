@@ -351,6 +351,7 @@ export function RequirementsTab({
                   <tr className="text-left text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">
                     <th className="px-4 py-2">Section</th>
                     <th className="px-4 py-2">Req ID</th>
+                    <th className="px-4 py-2">Title</th>
                     <th className="px-4 py-2">Status</th>
                     <th className="px-4 py-2 text-right">Review Status</th>
                   </tr>
@@ -380,6 +381,12 @@ export function RequirementsTab({
                           onClick={() => handleRowClick(rec)}
                         >
                           {rec.id}
+                        </td>
+                        <td
+                          className="max-w-xs cursor-pointer truncate px-4 py-2.5 text-[var(--color-muted)]"
+                          onClick={() => handleRowClick(rec)}
+                        >
+                          {rec.title}
                         </td>
                         <td
                           className="cursor-pointer px-4 py-2.5"

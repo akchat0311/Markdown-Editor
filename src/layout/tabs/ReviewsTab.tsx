@@ -362,7 +362,16 @@ export function ReviewsTab({ onNavigate }: ReviewsTabProps) {
                   onClick={() => handleRowNavigate(row)}
                 >
                   <td className="px-4 py-2.5 font-mono font-medium text-[var(--color-text)]">
-                    {row.id}
+                    {isSectionReviewTarget(row.id) ? (
+                      <span className="flex flex-col gap-0.5">
+                        <span className="text-[var(--color-accent)]">§{row.id.replace(/^section:/, "")}</span>
+                        {row.section !== "—" && (
+                          <span className="text-[10px] font-normal text-[var(--color-muted)]">{row.section}</span>
+                        )}
+                      </span>
+                    ) : (
+                      row.id
+                    )}
                   </td>
                   <td className="max-w-[160px] truncate px-4 py-2.5 text-[var(--color-muted)]">
                     {row.section}
