@@ -37,8 +37,7 @@ import { addRecentFile, removeRecentFile } from "@/persistence/recentFiles";
 import type { RecentFile } from "@/persistence/recentFiles";
 import { ResizeHandle } from "@/layout/ResizeHandle";
 import { OutlinePanel } from "@/layout/OutlinePanel";
-import { RequirementsIndex } from "@/layout/RequirementsIndex";
-import { QualityChecksPanel } from "@/layout/QualityChecksPanel";
+import { Dashboard } from "@/layout/Dashboard";
 import { WorkspacePanel } from "@/layout/WorkspacePanel";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useConfigStore } from "@/stores/configStore";
@@ -98,8 +97,7 @@ export default function App() {
   } | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findShowReplace, setFindShowReplace] = useState(false);
-  const [reqIndexOpen, setReqIndexOpen] = useState(false);
-  const [qualityOpen, setQualityOpen] = useState(false);
+  const [dashboardOpen, setDashboardOpen] = useState(false);
 
   const initialDoc = parseMarkdownToDoc(activeTab?.markdown ?? "");
 
@@ -378,24 +376,6 @@ export default function App() {
 
   // ── Quality checks navigation ────────────────────────────────────────────────
 
-  const handleQualityNavigate = useCallback(
-    (targetId: string) => {
-      if (!editor) return;
-      const { requirementPattern } = useConfigStore.getState();
-      if (!requirementPattern) return;
-      const derived = derivePattern(requirementPattern.example);
-      if (!derived) return;
-      const regex = buildDetectionRegex(derived.prefix);
-      const flat = flattenOutline(deriveOutline(editor));
-      const target = flat.find((n) => {
-        const m = n.label.match(regex);
-        return m ? derived.prefix + m[1] === targetId : false;
-      });
-      if (!target) return;
-      editor.chain().focus().setTextSelection(target.pmPos + 1).scrollIntoView().run();
-    },
-    [editor],
-  );
 
   // ── Review comments ──────────────────────────────────────────────────────────
 
@@ -942,14 +922,9 @@ export default function App() {
         setFindOpenRef.current(true);
         return;
       }
-      if (e.key === "r" && e.shiftKey) {
+      if (e.key.toLowerCase() === "d" && e.shiftKey) {
         e.preventDefault();
-        setReqIndexOpen((o) => !o);
-        return;
-      }
-      if (e.key.toLowerCase() === "q" && e.shiftKey) {
-        e.preventDefault();
-        setQualityOpen((o) => !o);
+        setDashboardOpen((o) => !o);
         return;
       }
     };
@@ -984,8 +959,7 @@ export default function App() {
               new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true })
             )
           }
-          onRequirements={() => setReqIndexOpen((o) => !o)}
-          onQualityChecks={() => setQualityOpen((o) => !o)}
+          onDashboard={() => setDashboardOpen((o) => !o)}
         />
 
         <TabBar onRequestClose={handleRequestClose} />
@@ -1050,20 +1024,13 @@ export default function App() {
         <StatusBar onSaveReview={handleSaveReview} onSaveReviewAs={handleSaveReviewAs} />
       </div>
 
-      {/* Requirements Index */}
-      <RequirementsIndex
-        open={reqIndexOpen}
-        onClose={() => setReqIndexOpen(false)}
+      {/* Unified Dashboard */}
+      <Dashboard
+        open={dashboardOpen}
+        onClose={() => setDashboardOpen(false)}
         onLoadReview={handleLoadReview}
         onSaveReview={handleSaveReview}
         onSaveReviewAs={handleSaveReviewAs}
-      />
-
-      {/* Quality Checks panel */}
-      <QualityChecksPanel
-        open={qualityOpen}
-        onClose={() => setQualityOpen(false)}
-        onNavigate={handleQualityNavigate}
       />
 
       {/* Inline comment drawer — opened by clicking badges on requirement headings */}

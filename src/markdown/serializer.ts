@@ -1,4 +1,5 @@
-import { toMarkdown } from "mdast-util-to-markdown";
+import { toMarkdown, defaultHandlers } from "mdast-util-to-markdown";
+import { gfmTaskListItemToMarkdown } from "mdast-util-gfm-task-list-item";
 import { gfmToMarkdown } from "mdast-util-gfm";
 import { mathToMarkdown } from "mdast-util-math";
 import type {
@@ -6,6 +7,7 @@ import type {
   Blockquote,
   Break,
   Code,
+  Definition,
   Delete,
   Emphasis,
   Heading,
@@ -15,6 +17,7 @@ import type {
   Link,
   List,
   ListItem,
+  Parents,
   Paragraph,
   PhrasingContent,
   Root,
@@ -25,8 +28,51 @@ import type {
   Text as MdastText,
   ThematicBreak,
 } from "mdast";
+import type { Info, State } from "mdast-util-to-markdown";
 import { DEFAULT_CALLOUT_TYPE, formatCalloutMarker, type CalloutType } from "./calloutSyntax";
 import type { PMMark, PMNode } from "./types";
+
+// The GFM extension registers its own `listItem` handler (via extensions array)
+// that adds the `[x]` / `[ ]` checkbox prefix for task list items. Our top-level
+// `handlers` option is applied AFTER extensions and would clobber the GFM handler,
+// breaking task list serialization. We hold a direct reference to the GFM handler
+// so we can delegate to it for all non-per-item cases.
+const gfmListItemHandler = gfmTaskListItemToMarkdown().handlers!.listItem!;
+
+/**
+ * Custom listItem handler that emits the per-item marker value stored in
+ * `node.value` (a non-standard MDAST extension field) instead of the
+ * sequential numbering that mdast-util-to-markdown normally computes.
+ *
+ * For ordered list items that carry an explicit `value`, we temporarily
+ * patch `parent.start = node.value` and disable `incrementListMarker` so
+ * the built-in handler computes `parent.start + 0 = node.value`.
+ * The patch is restored synchronously before returning.
+ *
+ * For all other items (unordered lists, task lists, or ordered items
+ * without a stored value), we delegate to the GFM handler which handles
+ * the task-list checkbox and falls through to `defaultHandlers.listItem`.
+ */
+function listItemHandler(
+  node: ListItem & { value?: number },
+  parent: Parents | undefined,
+  state: State,
+  info: Info,
+): string {
+  if (parent?.type === "list" && (parent as List).ordered && typeof node.value === "number") {
+    const list = parent as List;
+    const savedStart = list.start;
+    const savedIncrement = state.options.incrementListMarker;
+    list.start = node.value;
+    state.options.incrementListMarker = false;
+    const result = defaultHandlers.listItem(node, parent, state, info);
+    list.start = savedStart;
+    state.options.incrementListMarker = savedIncrement;
+    return result;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return gfmListItemHandler(node as any, parent as any, state, info);
+}
 
 const TO_MARKDOWN_OPTIONS = {
   // singleTilde: false — ensures ~~text~~ for strikethrough, leaving ~text~ clean for subscript.
@@ -45,6 +91,7 @@ const TO_MARKDOWN_OPTIONS = {
   rule: "-" as const,
   ruleSpaces: false,
   tightDefinitions: true,
+  handlers: { listItem: listItemHandler },
 };
 
 export function serializeDocToMarkdown(doc: PMNode): string {
@@ -74,7 +121,9 @@ export function serializeDocToMarkdown(doc: PMNode): string {
  * (i.e. `]` is NOT followed by `(` or `[`) are safe unescaped. Requirement
  * status markers like `[Draft]` fall into this category.
  *
- * Both transforms are skipped inside code fences where content is verbatim.
+ * Both transforms are skipped inside code fences and display-math blocks
+ * ($$…$$) where content is verbatim, and inside inline math ($…$) where
+ * backslash is LaTeX syntax, not a markdown escape character.
  */
 function unescapeUnderscores(md: string): string {
   const lines = md.split("\n");
@@ -82,16 +131,13 @@ function unescapeUnderscores(md: string): string {
   return lines
     .map((line) => {
       if (!fenceMarker) {
-        const m = line.match(/^(`{3,}|~{3,})/);
+        // Detect block-level verbatim regions: backtick/tilde fences AND $$
+        const m = line.match(/^(`{3,}|~{3,}|\$\$)/);
         if (m) {
           fenceMarker = m[1];
           return line;
         }
-        return line
-          .replace(/\\_/g, "_")
-          // Unescape \[text] → [text] ONLY when bracket does not start a
-          // callout marker (\[!TYPE]) and ] is not followed by ( or [.
-          .replace(/\\\[(?!!)([^\]]*)\](?![(\[])/g, "[$1]");
+        return unescapeLineSkippingInlineMath(line);
       }
       if (line.startsWith(fenceMarker) && line.slice(fenceMarker.length).trim() === "") {
         fenceMarker = "";
@@ -101,7 +147,29 @@ function unescapeUnderscores(md: string): string {
     .join("\n");
 }
 
-function blockToMdast(node: PMNode): BlockContent {
+/**
+ * Apply `\_` → `_` and `\[…]` → `[…]` to a single line, but skip content
+ * inside `$…$` inline-math spans where `\` is LaTeX syntax.
+ *
+ * The line is split into alternating outside/inside segments via a capturing
+ * split on `$…$`. Odd-indexed parts are math spans and are returned verbatim.
+ */
+function unescapeLineSkippingInlineMath(line: string): string {
+  const parts = line.split(/(\$[^$]+\$)/);
+  return parts
+    .map((part, i) =>
+      i % 2 === 0
+        ? part
+            .replace(/\\_/g, "_")
+            // Unescape \[text] → [text] ONLY when bracket does not start a
+            // callout marker (\[!TYPE]) and ] is not followed by ( or [.
+            .replace(/\\\[(?!!)([^\]]*)\](?![(\[])/g, "[$1]")
+        : part // math span — preserve LaTeX source verbatim
+    )
+    .join("");
+}
+
+function blockToMdast(node: PMNode): BlockContent | Definition {
   switch (node.type) {
     case "paragraph":
       return { type: "paragraph", children: inlineToMdast(node.content ?? []) } satisfies Paragraph;
@@ -117,7 +185,7 @@ function blockToMdast(node: PMNode): BlockContent {
       return {
         type: "list",
         ordered: false,
-        spread: false,
+        spread: Boolean(node.attrs?.spread),
         children: (node.content ?? []).map((li) => listItemToMdast(li, null)),
       } satisfies List;
 
@@ -126,7 +194,7 @@ function blockToMdast(node: PMNode): BlockContent {
         type: "list",
         ordered: true,
         start: typeof node.attrs?.start === "number" ? node.attrs.start : 1,
-        spread: false,
+        spread: Boolean(node.attrs?.spread),
         children: (node.content ?? []).map((li) => listItemToMdast(li, null)),
       } satisfies List;
 
@@ -134,7 +202,7 @@ function blockToMdast(node: PMNode): BlockContent {
       return {
         type: "list",
         ordered: false,
-        spread: false,
+        spread: Boolean(node.attrs?.spread),
         children: (node.content ?? []).map((li) =>
           listItemToMdast(li, Boolean(li.attrs?.checked))
         ),
@@ -143,7 +211,8 @@ function blockToMdast(node: PMNode): BlockContent {
     case "blockquote":
       return {
         type: "blockquote",
-        children: (node.content ?? []).map(blockToMdast),
+        // linkDefinition never appears inside blockquotes; cast is safe.
+        children: (node.content ?? []).map(blockToMdast) as BlockContent[],
       } satisfies Blockquote;
 
     case "callout":
@@ -162,6 +231,7 @@ function blockToMdast(node: PMNode): BlockContent {
       return {
         type: "code",
         lang: (node.attrs?.language as string) || null,
+        meta: (node.attrs?.metadata as string | null) ?? null,
         value: flattenPlainText(node.content ?? []),
       } satisfies Code;
 
@@ -177,6 +247,19 @@ function blockToMdast(node: PMNode): BlockContent {
     case "rawHtmlBlock":
       return { type: "html", value: (node.attrs?.html as string) ?? "" } satisfies Html;
 
+    case "linkDefinition": {
+      const label = (node.attrs?.label as string) ?? "";
+      return {
+        type: "definition",
+        // identifier is the normalized (lowercased) form used for lookup;
+        // label is the original form that appears in the serialized output.
+        identifier: label.toLowerCase(),
+        label,
+        url: (node.attrs?.url as string) ?? "",
+        title: (node.attrs?.title as string | null) ?? null,
+      } satisfies Definition;
+    }
+
     default:
       if (import.meta.env.DEV) {
         console.warn(`[serializer] unrecognized node type "${node.type}", dropped`);
@@ -185,22 +268,29 @@ function blockToMdast(node: PMNode): BlockContent {
   }
 }
 
-function listItemToMdast(node: PMNode, checked: boolean | null): ListItem {
-  return {
+function listItemToMdast(node: PMNode, checked: boolean | null): ListItem & { value?: number } {
+  const base: ListItem & { value?: number } = {
     type: "listItem",
     checked,
-    spread: false,
-    children: (node.content ?? []).map(blockToMdast),
+    spread: Boolean(node.attrs?.spread),
+    // linkDefinition never appears inside list items; cast is safe.
+    children: (node.content ?? []).map(blockToMdast) as BlockContent[],
   };
+  if (typeof node.attrs?.value === "number") base.value = node.attrs.value;
+  return base;
 }
 
 function calloutToMdast(node: PMNode): Blockquote {
   const type = (node.attrs?.type as CalloutType) || DEFAULT_CALLOUT_TYPE;
+  // Use the original marker word if stored; fall back to canonical uppercase.
+  const rawMarker = node.attrs?.marker as string | null | undefined;
+  const markerText = rawMarker ? `[!${rawMarker}]` : formatCalloutMarker(type);
   const markerPara: Paragraph = {
     type: "paragraph",
-    children: [{ type: "text", value: formatCalloutMarker(type) }],
+    children: [{ type: "text", value: markerText }],
   };
-  const body = (node.content ?? []).map(blockToMdast);
+  // linkDefinition never appears inside callouts; cast is safe.
+  const body = (node.content ?? []).map(blockToMdast) as BlockContent[];
   return { type: "blockquote", children: [markerPara, ...body] };
 }
 

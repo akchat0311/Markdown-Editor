@@ -1,7 +1,5 @@
 import StarterKit from "@tiptap/starter-kit";
 import { TableKit } from "@tiptap/extension-table";
-import TaskList from "@tiptap/extension-task-list";
-import TaskItem from "@tiptap/extension-task-item";
 import { WorkspaceImage } from "./WorkspaceImage";
 import { RawHtmlBlock } from "./RawHtmlBlock";
 import { RawHtmlInline } from "./RawHtmlInline";
@@ -21,6 +19,14 @@ import { RequirementStatus } from "./RequirementStatus";
 import { ReviewCommentBadge } from "./ReviewCommentBadge";
 import { RequirementIdMigration } from "./RequirementIdMigration";
 import { LinkNavigation } from "./LinkNavigation";
+import { LinkDefinition } from "./LinkDefinition";
+import {
+  SpreadBulletList,
+  SpreadOrderedList,
+  SpreadListItem,
+  SpreadTaskList,
+  SpreadTaskItem,
+} from "./SpreadLists";
 import { findReplacePlugin } from "@/editor/plugins/findReplace";
 
 const FindReplaceExtension = Extension.create({
@@ -37,7 +43,16 @@ export function createEditorExtensions(): Extensions {
       heading: { levels: [1, 2, 3, 4, 5, 6] },
       // Disable StarterKit's plain codeBlock — MermaidCodeBlock replaces it
       codeBlock: false,
+      // Disable built-in list extensions — SpreadBulletList / SpreadOrderedList /
+      // SpreadListItem replace them with an added `spread` attr for loose-list
+      // fidelity. Names stay the same so all commands and keymaps continue to work.
+      bulletList: false,
+      orderedList: false,
+      listItem: false,
     }),
+    SpreadBulletList,
+    SpreadOrderedList,
+    SpreadListItem,
     MermaidCodeBlock,
     MathMark,
     Highlight,
@@ -45,8 +60,8 @@ export function createEditorExtensions(): Extensions {
     Subscript,
     TableKit.configure({ table: { resizable: true } }),
     TableAlignment,
-    TaskList,
-    TaskItem.configure({ nested: true }),
+    SpreadTaskList,
+    SpreadTaskItem.configure({ nested: true }),
     WorkspaceImage.configure({ inline: false }),
     RawHtmlBlock,
     RawHtmlInline,
@@ -62,5 +77,6 @@ export function createEditorExtensions(): Extensions {
     ReviewCommentBadge,
     RequirementIdMigration,
     LinkNavigation,
+    LinkDefinition,
   ];
 }

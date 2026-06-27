@@ -13,6 +13,18 @@ import { MermaidView } from "../components/MermaidView";
  * as standard fenced code blocks with `mermaid` as the language identifier.
  */
 export const MermaidCodeBlock = CodeBlock.extend({
+  // Extend the base CodeBlock attrs to include the fenced code info-string
+  // metadata (everything after the first whitespace in the opening fence line,
+  // e.g. `title="Example" {2-4}` in ```ts title="Example" {2-4}`).
+  // Without this the attr is stripped by ProseMirror before it reaches the
+  // serializer, causing silent data loss on load → save.
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      metadata: { default: null },
+    };
+  },
+
   addNodeView() {
     return ReactNodeViewRenderer(MermaidView);
   },

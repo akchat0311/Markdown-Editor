@@ -188,8 +188,7 @@ export interface HeaderProps {
   onExportMarkdown?: () => void;
   onExportReviewsCsv?: () => void;
   onSearch?: () => void;
-  onRequirements?: () => void;
-  onQualityChecks?: () => void;
+  onDashboard?: () => void;
 }
 
 export function Header({
@@ -204,8 +203,7 @@ export function Header({
   onExportMarkdown,
   onExportReviewsCsv,
   onSearch,
-  onRequirements,
-  onQualityChecks,
+  onDashboard,
 }: HeaderProps) {
   const [exportOpen, setExportOpen] = useState(false);
   const { theme, toggleTheme, sidebarOpen, toggleSidebar } = useUIStore();
@@ -288,33 +286,20 @@ export function Header({
         <kbd className="rounded bg-[var(--color-border)] px-1 font-mono text-[10px]">⌘K</kbd>
       </button>
 
-      {onRequirements && (
+      {onDashboard && (
         <button
           className="flex h-7 shrink-0 items-center gap-2 rounded border border-[var(--color-border)] px-2 text-xs text-[var(--color-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors"
-          onClick={onRequirements}
-          title="Requirements Index (⌘⇧R)"
-        >
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-            <rect x="2" y="2" width="12" height="12" rx="1.5" />
-            <path d="M5 5.5h6M5 8h6M5 10.5h4" />
-          </svg>
-          <span>Requirements</span>
-          <kbd className="rounded bg-[var(--color-border)] px-1 font-mono text-[10px]">⌘⇧R</kbd>
-        </button>
-      )}
-
-      {onQualityChecks && (
-        <button
-          className="flex h-7 shrink-0 items-center gap-2 rounded border border-[var(--color-border)] px-2 text-xs text-[var(--color-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors"
-          onClick={onQualityChecks}
-          title="Quality Checks (⌘⇧Q)"
+          onClick={onDashboard}
+          title="Dashboard (⌘⇧D)"
         >
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M6 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V9" />
-            <path d="M9 7l2 2 4-5" />
+            <rect x="1" y="1" width="6" height="6" rx="1" />
+            <rect x="9" y="1" width="6" height="6" rx="1" />
+            <rect x="1" y="9" width="6" height="6" rx="1" />
+            <rect x="9" y="9" width="6" height="6" rx="1" />
           </svg>
-          <span>Quality</span>
-          <kbd className="rounded bg-[var(--color-border)] px-1 font-mono text-[10px]">⌘⇧Q</kbd>
+          <span>Dashboard</span>
+          <kbd className="rounded bg-[var(--color-border)] px-1 font-mono text-[10px]">⌘⇧D</kbd>
         </button>
       )}
 

@@ -31,7 +31,7 @@ Tables support per-column horizontal alignment (`| :--- |`, `| :---: |`, `| ---:
 
 Headings can encode requirement IDs — useful for specification documents.
 
-### REQ_002 [Draft]
+### REQ_001 [Draft]
 
 All API responses shall include a `Content-Security-Policy` header.
 
@@ -39,19 +39,23 @@ All API responses shall include a `Content-Security-Policy` header.
 
 *Open **⌘N** to create a new document, or **⌘O** to open an existing Markdown file.*
 
-### REQ_001 [Draft]
+### REQ_002 [Draft]
 
 The system shall authenticate users via OAuth 2.0 before granting access to protected resources.
+
+$$
+TqCalc_TCOT_CalcMode = TqCalc_TCOT_CalcMode + TqCalc_TCOT_CalcMode+ TqCalc_TCOT_CalcMode+ TqCalc_TCOT_CalcMode
+$$
 
 ### REQ_003 [Draft]
 
 ### REQ_004 [Draft]
 
-### REQ_006 [Draft]
-
 ### REQ_005 [Draft]
 
-### REQ_010 [Draft]
+### REQ_006 [Draft]
+
+### REQ_007 [Draft]
 
 ### REQ_008 [Draft]
 
