@@ -15,13 +15,13 @@ import type { RequirementRecord } from "@/editor/utils/requirementOps";
 // Add future tabs (Traceability, Metrics, AI Review) here.
 // No other files need to change.
 
-export type TabId = "overview" | "requirements" | "reviews" | "insights";
+export type TabId = "overview" | "requirements" | "reviews" | "quality";
 
 const TABS: readonly { id: TabId; label: string }[] = [
   { id: "overview",      label: "Overview" },
   { id: "requirements",  label: "Requirements" },
   { id: "reviews",       label: "Reviews" },
-  { id: "insights",      label: "Insights" },
+  { id: "quality",       label: "Quality" },
 ] as const;
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -117,17 +117,19 @@ export function Dashboard({
           {activeTab === "requirements" && (
             <RequirementsTab
               onNavigate={handleNavigate}
-              onLoadReview={onLoadReview}
-              onSaveReview={onSaveReview}
-              onSaveReviewAs={onSaveReviewAs}
               selectedRecord={selectedRecord}
               onSelectRecord={setSelectedRecord}
             />
           )}
           {activeTab === "reviews" && (
-            <ReviewsTab onNavigate={handleNavigate} />
+            <ReviewsTab
+              onNavigate={handleNavigate}
+              onLoadReview={onLoadReview}
+              onSaveReview={onSaveReview}
+              onSaveReviewAs={onSaveReviewAs}
+            />
           )}
-          {activeTab === "insights" && (
+          {activeTab === "quality" && (
             <InsightsTab onNavigateByTargetId={handleNavigateByTargetId} />
           )}
         </div>

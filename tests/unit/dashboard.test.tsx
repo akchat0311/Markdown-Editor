@@ -101,7 +101,7 @@ describe("Dashboard — tab bar", () => {
     expect(screen.getByTestId("tab-overview")).toBeInTheDocument();
     expect(screen.getByTestId("tab-requirements")).toBeInTheDocument();
     expect(screen.getByTestId("tab-reviews")).toBeInTheDocument();
-    expect(screen.getByTestId("tab-insights")).toBeInTheDocument();
+    expect(screen.getByTestId("tab-quality")).toBeInTheDocument();
   });
 
   it("defaults to the Overview tab", () => {
@@ -121,9 +121,9 @@ describe("Dashboard — tab bar", () => {
     expect(screen.getByTestId("reviews-tab")).toBeInTheDocument();
   });
 
-  it("switches to Insights tab on click", () => {
+  it("switches to Quality tab on click", () => {
     renderDashboard();
-    fireEvent.click(screen.getByTestId("tab-insights"));
+    fireEvent.click(screen.getByTestId("tab-quality"));
     expect(screen.getByTestId("insights-content")).toBeInTheDocument();
   });
 
@@ -137,14 +137,14 @@ describe("Dashboard — tab bar", () => {
   });
 });
 
-// ── Insights tab ──────────────────────────────────────────────────────────────
+// ── Quality tab ───────────────────────────────────────────────────────────────
 
-describe("Dashboard — Insights tab", () => {
+describe("Dashboard — Quality tab", () => {
   beforeEach(resetStores);
 
   function goToInsights() {
     renderDashboard();
-    fireEvent.click(screen.getByTestId("tab-insights"));
+    fireEvent.click(screen.getByTestId("tab-quality"));
   }
 
   it("shows empty state when no issues", () => {
@@ -159,21 +159,23 @@ describe("Dashboard — Insights tab", () => {
     expect(screen.getByTestId("issue-count-badge")).toHaveTextContent("2");
   });
 
-  it("renders error and warning sections", () => {
+  it("renders category sections and rule sections when issues exist", () => {
     useValidationStore.setState({
       issues: [makeIssue({ severity: "error" }), makeIssue({ severity: "warning" })],
     });
     goToInsights();
-    expect(screen.getByTestId("errors-section")).toBeInTheDocument();
-    expect(screen.getByTestId("warnings-section")).toBeInTheDocument();
+    expect(screen.getAllByTestId("category-section").length).toBeGreaterThan(0);
+    expect(screen.getAllByTestId("rule-section").length).toBeGreaterThan(0);
   });
 
-  it("renders one issue row per issue", () => {
+  it("renders one row per affected requirement when rule is expanded", () => {
     useValidationStore.setState({
       issues: [makeIssue(), makeIssue(), makeIssue({ severity: "warning" })],
     });
     goToInsights();
-    expect(screen.getAllByTestId("issue-row")).toHaveLength(3);
+    // Rules default to collapsed; expand the first rule to reveal requirement rows
+    fireEvent.click(screen.getAllByTestId("rule-toggle")[0]);
+    expect(screen.getAllByTestId("req-row")).toHaveLength(3);
   });
 });
 
@@ -186,6 +188,83 @@ describe("Dashboard — Reviews tab", () => {
     renderDashboard();
     fireEvent.click(screen.getByTestId("tab-reviews"));
   }
+
+  it("shows Review File section always", () => {
+    goToReviews();
+    expect(screen.getByTestId("review-file-section")).toBeInTheDocument();
+  });
+
+  it("shows 'No review file loaded' when not loaded", () => {
+    goToReviews();
+    expect(screen.getByTestId("review-file-status")).toHaveTextContent("No review file loaded");
+  });
+
+  it("shows Load Review button when not loaded", () => {
+    goToReviews();
+    expect(screen.getByTestId("load-review-btn")).toHaveTextContent("Load Review…");
+  });
+
+  it("shows Load Different button when loaded", () => {
+    useReviewCommentsStore.setState({ comments: {}, loaded: true, isDirty: false });
+    goToReviews();
+    expect(screen.getByTestId("load-review-btn")).toHaveTextContent("Load Different…");
+  });
+
+  it("shows Save button when loaded and dirty", () => {
+    useReviewCommentsStore.setState({ comments: {}, loaded: true, isDirty: true });
+    goToReviews();
+    expect(screen.getByTestId("save-review-btn")).toBeInTheDocument();
+  });
+
+  it("does not show Save button when not dirty", () => {
+    useReviewCommentsStore.setState({ comments: {}, loaded: true, isDirty: false });
+    goToReviews();
+    expect(screen.queryByTestId("save-review-btn")).not.toBeInTheDocument();
+  });
+
+  it("shows Save As button when loaded", () => {
+    useReviewCommentsStore.setState({ comments: {}, loaded: true, isDirty: false });
+    goToReviews();
+    expect(screen.getByTestId("save-review-as-btn")).toBeInTheDocument();
+  });
+
+  it("calls onLoadReview when Load Review button is clicked", () => {
+    const onLoadReview = vi.fn();
+    renderDashboard({ onLoadReview });
+    fireEvent.click(screen.getByTestId("tab-reviews"));
+    fireEvent.click(screen.getByTestId("load-review-btn"));
+    expect(onLoadReview).toHaveBeenCalledOnce();
+  });
+
+  it("calls onSaveReview when Save button is clicked", () => {
+    const onSaveReview = vi.fn();
+    useReviewCommentsStore.setState({ comments: {}, loaded: true, isDirty: true });
+    renderDashboard({ onSaveReview });
+    fireEvent.click(screen.getByTestId("tab-reviews"));
+    fireEvent.click(screen.getByTestId("save-review-btn"));
+    expect(onSaveReview).toHaveBeenCalledOnce();
+  });
+
+  it("calls onSaveReviewAs when Save As button is clicked", () => {
+    const onSaveReviewAs = vi.fn();
+    useReviewCommentsStore.setState({ comments: {}, loaded: true, isDirty: false });
+    renderDashboard({ onSaveReviewAs });
+    fireEvent.click(screen.getByTestId("tab-reviews"));
+    fireEvent.click(screen.getByTestId("save-review-as-btn"));
+    expect(onSaveReviewAs).toHaveBeenCalledOnce();
+  });
+
+  it("shows Saved status when loaded and not dirty", () => {
+    useReviewCommentsStore.setState({ comments: {}, loaded: true, isDirty: false });
+    goToReviews();
+    expect(screen.getByTestId("review-file-status")).toHaveTextContent("✓ Saved");
+  });
+
+  it("shows Modified status when loaded and dirty", () => {
+    useReviewCommentsStore.setState({ comments: {}, loaded: true, isDirty: true });
+    goToReviews();
+    expect(screen.getByTestId("review-file-status")).toHaveTextContent("● Modified");
+  });
 
   it("shows empty state when no review comments", () => {
     goToReviews();

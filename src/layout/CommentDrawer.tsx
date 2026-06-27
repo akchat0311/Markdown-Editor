@@ -6,6 +6,7 @@ import { UserNameForm } from "@/layout/UserNameForm";
 import type { CommentStatus, ReviewComment } from "@/types/reviewComment";
 import type { RequirementRecord } from "@/editor/utils/requirementOps";
 import { isSectionReviewTarget, sectionNumberFromReviewId } from "@/editor/utils/sectionReviewOps";
+import { REVIEW_STATUS_CHIP_CLS } from "@/layout/shared/reviewStatusColors";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -25,26 +26,16 @@ function formatDate(iso: string): string {
 
 // ── Comment status chip ───────────────────────────────────────────────────────
 
-const STATUS_CHIP: Record<CommentStatus, { label: string; cls: string }> = {
-  open: {
-    label: "Open",
-    cls: "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400",
-  },
-  responded: {
-    label: "Responded",
-    cls: "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400",
-  },
-  closed: {
-    label: "Closed",
-    cls: "bg-green-100 text-green-700 dark:bg-green-950/40 dark:text-green-400",
-  },
+const STATUS_CHIP_LABEL: Record<CommentStatus, string> = {
+  open: "Open",
+  responded: "Responded",
+  closed: "Closed",
 };
 
 function CommentStatusChip({ status }: { status: CommentStatus }) {
-  const { label, cls } = STATUS_CHIP[status];
   return (
-    <span className={`rounded-full px-2 py-px text-[10px] font-semibold ${cls}`}>
-      {label}
+    <span className={`rounded-full px-2 py-px text-[10px] font-semibold ${REVIEW_STATUS_CHIP_CLS[status]}`}>
+      {STATUS_CHIP_LABEL[status]}
     </span>
   );
 }

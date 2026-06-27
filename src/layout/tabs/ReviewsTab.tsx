@@ -11,7 +11,8 @@ import { collectReviewExportRows, generateReviewCsv, downloadReviewCsv } from "@
 import { buildDashboardRows, sortRows, filterRows } from "@/layout/ReviewDashboard";
 import type { DashboardRow } from "@/layout/ReviewDashboard";
 import { badgeClass, statusLabel } from "@/layout/shared/StatusBadge";
-import { isSectionReviewTarget } from "@/editor/utils/sectionReviewOps";
+import { REVIEW_STATUS_CHIP_CLS } from "@/layout/shared/reviewStatusColors";
+import { isSectionReviewTarget, extractSectionNumber, sectionReviewId } from "@/editor/utils/sectionReviewOps";
 import type { RequirementStatus } from "@/types/requirementStatus";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -49,16 +50,23 @@ function SortButton({
   );
 }
 
-function OpenBadge({ open, total }: { open: number; total: number }) {
+function OpenBadge({ open, responded, total }: { open: number; responded: number; total: number }) {
+  const base = "inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium";
   if (open > 0)
     return (
-      <span className="inline-flex items-center gap-1 rounded bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-700 dark:bg-red-950/40 dark:text-red-400" data-testid="open-badge">
+      <span className={`${base} ${REVIEW_STATUS_CHIP_CLS.open}`} data-testid="open-badge">
         ● {open} open
+      </span>
+    );
+  if (responded > 0)
+    return (
+      <span className={`${base} ${REVIEW_STATUS_CHIP_CLS.responded}`} data-testid="open-badge">
+        ● {responded} pending
       </span>
     );
   if (total > 0)
     return (
-      <span className="inline-flex items-center gap-1 rounded bg-green-100 px-2 py-0.5 text-[11px] font-medium text-green-700 dark:bg-green-950/40 dark:text-green-400" data-testid="open-badge">
+      <span className={`${base} ${REVIEW_STATUS_CHIP_CLS.closed}`} data-testid="open-badge">
         ✓ {total}
       </span>
     );
@@ -143,13 +151,20 @@ function StatusDistribution({
 
 export interface ReviewsTabProps {
   onNavigate: (pmPos: number) => void;
+  onLoadReview: () => void;
+  onSaveReview: () => void;
+  onSaveReviewAs: () => void;
 }
 
-export function ReviewsTab({ onNavigate }: ReviewsTabProps) {
+export function ReviewsTab({ onNavigate, onLoadReview, onSaveReview, onSaveReviewAs }: ReviewsTabProps) {
   const editor = useContext(EditorContext);
   const requirementPattern = useConfigStore((s) => s.requirementPattern);
   const statuses = useStatusConfigStore((s) => s.statuses);
   const reviewComments = useReviewCommentsStore((s) => s.comments);
+  const reviewLoaded = useReviewCommentsStore((s) => s.loaded);
+  const reviewIsDirty = useReviewCommentsStore((s) => s.isDirty);
+  const reviewHandle = useTabStore((s) => getActiveTab(s)?.reviewHandle ?? null);
+  const reviewFileName = reviewHandle?.name;
 
   const index = useRequirementIndex(editor, requirementPattern?.example ?? null);
 
@@ -170,9 +185,19 @@ export function ReviewsTab({ onNavigate }: ReviewsTabProps) {
 
   // ── Data ─────────────────────────────────────────────────────────────────────
 
+  const sectionPosMap = useMemo((): ReadonlyMap<string, number> => {
+    if (!editor) return new Map();
+    const map = new Map<string, number>();
+    for (const node of flattenOutline(deriveOutline(editor))) {
+      const num = extractSectionNumber(node.label);
+      if (num) map.set(sectionReviewId(num), node.pmPos);
+    }
+    return map;
+  }, [editor, index]);
+
   const allRows = useMemo(
-    () => buildDashboardRows(reviewComments, index?.requirements ?? []),
-    [reviewComments, index],
+    () => buildDashboardRows(reviewComments, index?.requirements ?? [], sectionPosMap),
+    [reviewComments, index, sectionPosMap],
   );
 
   const overviewStats = useMemo(() => {
@@ -235,21 +260,92 @@ export function ReviewsTab({ onNavigate }: ReviewsTabProps) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden" data-testid="reviews-tab">
+      {/* ── Review File section ── */}
+      <div className="shrink-0 border-b border-[var(--color-border)] px-5 py-4" data-testid="review-file-section">
+        <h2 className="mb-3 text-sm font-bold uppercase tracking-wider text-[var(--color-text)]">
+          Review File
+        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {/* Status */}
+          <div className="min-w-0">
+            {!reviewLoaded ? (
+              <p className="text-xs text-[var(--color-muted)]" data-testid="review-file-status">
+                No review file loaded
+              </p>
+            ) : (
+              <>
+                {reviewFileName && (
+                  <p className="truncate text-xs font-medium text-[var(--color-text)]" data-testid="review-file-name">
+                    {reviewFileName}
+                  </p>
+                )}
+                <p
+                  className={`text-[11px] ${reviewIsDirty ? "text-amber-600 dark:text-amber-400" : "text-[var(--color-muted)]"}`}
+                  data-testid="review-file-status"
+                >
+                  {reviewIsDirty ? "● Modified" : "✓ Saved"}
+                </p>
+              </>
+            )}
+          </div>
+          {/* Actions */}
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+            {reviewLoaded && reviewIsDirty && (
+              <button
+                onClick={onSaveReview}
+                className="rounded border border-amber-400 px-2.5 py-1 text-[11px] text-amber-600 transition-colors hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-900/20"
+                data-testid="save-review-btn"
+              >
+                Save
+              </button>
+            )}
+            {reviewLoaded && (
+              <button
+                onClick={onSaveReviewAs}
+                className="rounded border border-[var(--color-border)] px-2.5 py-1 text-[11px] text-[var(--color-muted)] transition-colors hover:bg-[var(--color-border)]"
+                data-testid="save-review-as-btn"
+              >
+                Save As…
+              </button>
+            )}
+            <button
+              onClick={onLoadReview}
+              className="rounded border border-[var(--color-border)] px-2.5 py-1 text-[11px] text-[var(--color-muted)] transition-colors hover:bg-[var(--color-border)]"
+              data-testid="load-review-btn"
+            >
+              {reviewLoaded ? "Load Different…" : "Load Review…"}
+            </button>
+            {hasData && (
+              <button
+                onClick={handleExportCsv}
+                className="rounded border border-[var(--color-border)] px-2.5 py-1 text-[11px] text-[var(--color-muted)] transition-colors hover:bg-[var(--color-border)]"
+                title="Export all review comments as CSV"
+                data-testid="export-csv-btn"
+              >
+                Export CSV…
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* ── Overview cards ── */}
       {hasData && (
-        <div className="grid shrink-0 grid-cols-5 divide-x divide-[var(--color-border)] border-b border-[var(--color-border)]" data-testid="overview-cards">
-          {[
-            { label: "Targets",         value: allRows.length,            testId: "card-targets" },
-            { label: "Total Comments",  value: overviewStats.totalComments, testId: "card-total" },
-            { label: "Open",            value: overviewStats.openCount,     testId: "card-open",      accent: overviewStats.openCount > 0 ? "text-red-600 dark:text-red-400" : undefined },
-            { label: "Pending",         value: overviewStats.respondedCount, testId: "card-responded", accent: overviewStats.respondedCount > 0 ? "text-amber-600 dark:text-amber-400" : undefined },
-            { label: "Closed",          value: overviewStats.closedCount,   testId: "card-closed",    accent: overviewStats.closedCount > 0 ? "text-green-600 dark:text-green-400" : undefined },
-          ].map(({ label, value, testId, accent }) => (
-            <div key={testId} className="flex flex-col items-center py-3" data-testid={testId}>
-              <span className={`text-xl font-semibold ${accent ?? "text-[var(--color-text)]"}`}>{value}</span>
-              <span className="mt-0.5 text-[10px] text-[var(--color-muted)]">{label}</span>
-            </div>
-          ))}
+        <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-paper)] px-5 py-4" data-testid="overview-cards">
+          <div className="grid grid-cols-5 gap-3">
+            {[
+              { label: "Targets",        value: allRows.length,               testId: "card-targets" },
+              { label: "Total Comments", value: overviewStats.totalComments,   testId: "card-total" },
+              { label: "Open",           value: overviewStats.openCount,       testId: "card-open",      accent: overviewStats.openCount > 0 ? "text-red-600 dark:text-red-400" : undefined },
+              { label: "Pending",        value: overviewStats.respondedCount,  testId: "card-responded", accent: overviewStats.respondedCount > 0 ? "text-amber-600 dark:text-amber-400" : undefined },
+              { label: "Closed",         value: overviewStats.closedCount,     testId: "card-closed",    accent: overviewStats.closedCount > 0 ? "text-green-600 dark:text-green-400" : undefined },
+            ].map(({ label, value, testId, accent }) => (
+              <div key={testId} data-testid={testId} className="flex flex-col items-center rounded-xl border border-[var(--color-border)] bg-[var(--color-page-bg)] px-3 py-3">
+                <span className={`text-2xl font-bold tabular-nums ${accent ?? "text-[var(--color-text)]"}`}>{value}</span>
+                <span className="mt-1 text-[10px] text-[var(--color-muted)]">{label}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -299,15 +395,6 @@ export function ReviewsTab({ onNavigate }: ReviewsTabProps) {
             />
             Open only
           </label>
-          <div className="flex-1" />
-          <button
-            onClick={handleExportCsv}
-            className="rounded border border-[var(--color-border)] px-2.5 py-1 text-[11px] text-[var(--color-muted)] transition-colors hover:bg-[var(--color-border)]"
-            title="Export all review comments as CSV"
-            data-testid="export-csv-btn"
-          >
-            Export CSV…
-          </button>
         </div>
       )}
 
@@ -386,7 +473,7 @@ export function ReviewsTab({ onNavigate }: ReviewsTabProps) {
                     )}
                   </td>
                   <td className="px-4 py-2.5">
-                    <OpenBadge open={row.open} total={row.total} />
+                    <OpenBadge open={row.open} responded={row.responded} total={row.total} />
                   </td>
                   <td className="px-4 py-2.5 text-[var(--color-muted)]">
                     <span className="tabular-nums">{row.open}o</span>

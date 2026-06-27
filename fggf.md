@@ -1,6 +1,6 @@
 # 1. Welcome to MD Editor
 
-A WYSIWYG Markdown editor with first-class support for Mermaid diagrams, LaTeX math, tables, callouts, and rich inline formatting.
+A WYSIWYG Markdown editor with first-class support for Mermaid.   diagrams, LaTeX math, tables, callouts, and rich inline formatti.  ng.
 
 Type `/` on any new line to insert blocks. Press **⌘N** to start a new document.
 
@@ -12,7 +12,7 @@ Type `/` on any new line to insert blocks. Press **⌘N** to start a new documen
 
 ## 1.1 Tables
 
-Tables support per-column horizontal alignment (`| :--- |`, `| :---: |`, `| ---: |`) via the bubble toolbar or right-click menu.
+Tables support per-column horizonta. l alignment (`| :--- |`, `| :---: |`, `| ---: |`) via the bubble toolbar or right-click menu.
 
 | Feature | Shortcut | Notes |
 | :- | :-: | -: |
@@ -33,7 +33,7 @@ Headings can encode requirement IDs — useful for specification documents.
 
 ### REQ_001 [Draft]
 
-All API responses shall include a `Content-Security-Policy` header.
+All API responses shoud include a `Content-Security-Policy` header.
 
 ---
 
@@ -54,6 +54,8 @@ $$
 ### REQ_005 [Draft]
 
 ### REQ_006 [Draft]
+
+can
 
 ### REQ_007 [Draft]
 

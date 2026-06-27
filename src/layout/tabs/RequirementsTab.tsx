@@ -5,7 +5,8 @@ import { useStatusConfigStore } from "@/stores/statusConfigStore";
 import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
 import { useRequirementIndex } from "@/editor/utils/useRequirementIndex";
 import { useCommentDetails } from "@/editor/utils/useCommentDetails";
-import { StatusBadge } from "@/layout/shared/StatusBadge";
+import { badgeClass, statusLabel } from "@/layout/shared/StatusBadge";
+import { REVIEW_STATUS_CHIP_CLS, REVIEW_STATUS_SELECTED_CLS, REVIEW_STATUS_HOVER_CLS } from "@/layout/shared/reviewStatusColors";
 import type { RequirementRecord } from "@/editor/utils/requirementOps";
 
 // ── Review status cell ─────────────────────────────────────────────────────────
@@ -38,7 +39,7 @@ function ReviewStatusCell({
         <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
           <path d="M4.5 1v7M1 4.5h7" />
         </svg>
-        Add
+        Add Review
       </button>
     );
   }
@@ -49,25 +50,20 @@ function ReviewStatusCell({
   let label: string;
   let cls: string;
 
+  const status = open > 0 ? "open" : responded > 0 ? "responded" : "closed";
   if (open > 0) {
     indicator = "●";
     label = `${open} open`;
-    cls = isSelected
-      ? "bg-red-600 text-white"
-      : "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-950/60";
   } else if (responded > 0) {
     indicator = "●";
     label = `${responded} pending`;
-    cls = isSelected
-      ? "bg-amber-600 text-white"
-      : "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 hover:bg-amber-200 dark:hover:bg-amber-950/60";
   } else {
     indicator = "✓";
     label = `${total}`;
-    cls = isSelected
-      ? "bg-green-600 text-white"
-      : "bg-green-100 text-green-700 dark:bg-green-950/40 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-950/60";
   }
+  cls = isSelected
+    ? REVIEW_STATUS_SELECTED_CLS[status]
+    : `${REVIEW_STATUS_CHIP_CLS[status]} ${REVIEW_STATUS_HOVER_CLS[status]}`;
 
   return (
     <button
@@ -94,18 +90,12 @@ const REVIEW_FILTER_OPTIONS: { id: ReviewState | "all"; label: string }[] = [
 
 export interface RequirementsTabProps {
   onNavigate: (pmPos: number) => void;
-  onLoadReview: () => void;
-  onSaveReview: () => void;
-  onSaveReviewAs: () => void;
   selectedRecord: RequirementRecord | null;
   onSelectRecord: (r: RequirementRecord | null) => void;
 }
 
 export function RequirementsTab({
   onNavigate,
-  onLoadReview,
-  onSaveReview,
-  onSaveReviewAs,
   selectedRecord,
   onSelectRecord,
 }: RequirementsTabProps) {
@@ -114,7 +104,6 @@ export function RequirementsTab({
   const setRequirementPattern = useConfigStore((s) => s.setRequirementPattern);
   const statuses = useStatusConfigStore((s) => s.statuses);
   const reviewLoaded = useReviewCommentsStore((s) => s.loaded);
-  const reviewIsDirty = useReviewCommentsStore((s) => s.isDirty);
   const commentDetails = useCommentDetails();
 
   const index = useRequirementIndex(editor, requirementPattern?.example ?? null);
@@ -151,10 +140,6 @@ export function RequirementsTab({
     () => Object.values(reviewStates).filter((s) => s === "open").length,
     [reviewStates],
   );
-  const pendingReqCount = useMemo(
-    () => Object.values(reviewStates).filter((s) => s === "pending").length,
-    [reviewStates],
-  );
 
   const filterOptions = useMemo(
     () => [{ id: "all", label: "All" }, ...statuses.map((s) => ({ id: s.id, label: s.label }))],
@@ -186,46 +171,8 @@ export function RequirementsTab({
   const total = index?.total ?? 0;
   const statusCounts = index?.statusCounts ?? {};
 
-  const summaryItems = statuses
-    .filter((s) => (statusCounts[s.id] ?? 0) > 0)
-    .map((s) => ({ label: s.label, count: statusCounts[s.id] }));
-  if ((statusCounts.unknown ?? 0) > 0) {
-    summaryItems.push({ label: "Unknown", count: statusCounts.unknown });
-  }
-
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden" data-testid="requirements-tab">
-      {/* ── Review file actions toolbar ── */}
-      <div className="flex shrink-0 items-center gap-2 border-b border-[var(--color-border)] px-4 py-2">
-        {reviewLoaded && reviewIsDirty && (
-          <button
-            onMouseDown={onSaveReview}
-            className="rounded border border-amber-400 px-2.5 py-1 text-[11px] text-amber-600 transition-colors hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-900/20"
-          >
-            ● Save Reviews
-          </button>
-        )}
-        {reviewLoaded && !reviewIsDirty && (
-          <span className="text-[11px] text-[var(--color-muted)] opacity-60">Reviews Saved</span>
-        )}
-        {reviewLoaded && (
-          <button
-            onMouseDown={onSaveReviewAs}
-            className="rounded border border-[var(--color-border)] px-2.5 py-1 text-[11px] text-[var(--color-muted)] transition-colors hover:bg-[var(--color-border)]"
-            title="Save review comments to a different file"
-          >
-            Save As…
-          </button>
-        )}
-        <button
-          onMouseDown={onLoadReview}
-          className="rounded border border-[var(--color-border)] px-2.5 py-1 text-[11px] text-[var(--color-muted)] transition-colors hover:bg-[var(--color-border)]"
-          title="Load a .review.json sidecar file"
-        >
-          {reviewLoaded ? "Load Different…" : "Load Reviews…"}
-        </button>
-      </div>
-
       {/* ── No pattern configured ── */}
       {!requirementPattern ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-12 text-center">
@@ -247,39 +194,48 @@ export function RequirementsTab({
       ) : (
         <>
           {/* ── Summary strip ── */}
-          <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-[var(--color-border)] px-4 py-2 text-xs text-[var(--color-muted)]">
-            <span className="font-medium text-[var(--color-text)]">{total} Requirements</span>
-            {summaryItems.map((item) => (
-              <span key={item.label} className="flex items-center gap-3">
-                <span className="opacity-40">·</span>
-                <span>{item.count} {item.label}</span>
+          <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-[var(--color-border)] bg-[var(--color-paper)] px-4 py-2.5">
+            <span className="text-xs">
+              <span className="font-semibold text-[var(--color-text)]">{total}</span>
+              <span className="ml-1 text-[var(--color-muted)]">Requirements</span>
+            </span>
+            {statuses.map((s) => (
+              <span key={s.id} className="flex items-center gap-3 text-xs">
+                <span className="text-[var(--color-muted)] opacity-40">·</span>
+                <span>
+                  <span className="font-semibold text-[var(--color-text)]">{statusCounts[s.id] ?? 0}</span>
+                  <span className="ml-1 text-[var(--color-muted)]">{s.label}</span>
+                </span>
               </span>
             ))}
-            {reviewLoaded && totalComments > 0 && (
-              <>
-                <span className="opacity-40">·</span>
-                {openReqCount > 0 ? (
-                  <span className="font-medium text-red-600 dark:text-red-400">
-                    {openReqCount} with open comments
+            {(statusCounts.unknown ?? 0) > 0 && (
+              <span className="flex items-center gap-3 text-xs">
+                <span className="text-[var(--color-muted)] opacity-40">·</span>
+                <span>
+                  <span className="font-semibold text-[var(--color-text)]">{statusCounts.unknown}</span>
+                  <span className="ml-1 text-[var(--color-muted)]">Unknown</span>
+                </span>
+              </span>
+            )}
+            {reviewLoaded && (
+              <span className="flex items-center gap-3 text-xs">
+                <span className="text-[var(--color-muted)] opacity-40">·</span>
+                <span>
+                  <span className={`font-semibold ${openReqCount > 0 ? "text-red-600 dark:text-red-400" : "text-[var(--color-text)]"}`}>
+                    {openReqCount}
                   </span>
-                ) : pendingReqCount > 0 ? (
-                  <span className="font-medium text-amber-600 dark:text-amber-400">
-                    {pendingReqCount} awaiting closure
-                  </span>
-                ) : (
-                  <span className="font-medium text-green-600 dark:text-green-400">
-                    All comments closed
-                  </span>
-                )}
-              </>
+                  <span className="ml-1 text-[var(--color-muted)]">Open Reviews</span>
+                </span>
+              </span>
             )}
           </div>
 
-          {/* ── Search + filters ── */}
-          <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[var(--color-border)] px-4 py-2">
-            <div className="relative min-w-[160px] flex-1">
+          {/* ── Filters toolbar ── */}
+          <div className="flex shrink-0 items-center gap-3 border-b border-[var(--color-border)] px-4 py-2">
+            {/* Search */}
+            <div className="relative w-80 shrink-0">
               <svg
-                className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[var(--color-muted)]"
+                className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-muted)]"
                 width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
               >
                 <circle cx="7" cy="7" r="5" />
@@ -291,38 +247,55 @@ export function RequirementsTab({
                 placeholder="Search by ID or section…"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                className="w-full rounded border border-[var(--color-border)] bg-[var(--color-page-bg)] py-1.5 pl-7 pr-3 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+                className="w-full rounded border border-[var(--color-border)] bg-[var(--color-page-bg)] py-1.5 pl-8 pr-3 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
                 data-testid="req-search"
               />
             </div>
 
-            <div className="flex items-center rounded-md border border-[var(--color-border)] text-[11px]">
-              {filterOptions.map((opt) => (
-                <button
-                  key={opt.id}
-                  onClick={() => setStatusFilter(opt.id)}
-                  className={[
-                    "px-2.5 py-1 transition-colors first:rounded-l-md last:rounded-r-md",
-                    statusFilter === opt.id
-                      ? "bg-[var(--color-accent)] text-white"
-                      : "text-[var(--color-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]",
-                  ].join(" ")}
-                >
-                  {opt.label}
-                </button>
-              ))}
+            <div className="h-4 w-px shrink-0 bg-[var(--color-border)]" />
+
+            {/* Status filter */}
+            <div className="flex items-center gap-2">
+              <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">
+                Status
+              </span>
+              <div className="flex items-center rounded border border-[var(--color-border)] text-[11px]">
+                {filterOptions.map((opt) => (
+                  <button
+                    key={opt.id}
+                    onClick={() => setStatusFilter(opt.id)}
+                    className={[
+                      "px-2.5 py-1 transition-colors first:rounded-l last:rounded-r",
+                      statusFilter === opt.id
+                        ? "bg-[var(--color-accent)] text-white"
+                        : "text-[var(--color-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]",
+                    ].join(" ")}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
+            {/* Review filter */}
             {reviewLoaded && totalComments > 0 && (
-              <select
-                value={reviewFilter}
-                onChange={(e) => setReviewFilter(e.target.value as ReviewState | "all")}
-                className="rounded border border-[var(--color-border)] bg-[var(--color-paper)] px-2 py-1 text-[11px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
-              >
-                {REVIEW_FILTER_OPTIONS.map((opt) => (
-                  <option key={opt.id} value={opt.id}>{opt.label}</option>
-                ))}
-              </select>
+              <>
+                <div className="h-4 w-px shrink-0 bg-[var(--color-border)]" />
+                <div className="flex items-center gap-2">
+                  <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">
+                    Review
+                  </span>
+                  <select
+                    value={reviewFilter}
+                    onChange={(e) => setReviewFilter(e.target.value as ReviewState | "all")}
+                    className="rounded border border-[var(--color-border)] bg-[var(--color-paper)] px-2 py-1 text-[11px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+                  >
+                    {REVIEW_FILTER_OPTIONS.map((opt) => (
+                      <option key={opt.id} value={opt.id}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
             )}
           </div>
 
@@ -346,55 +319,58 @@ export function RequirementsTab({
                 )}
               </div>
             ) : (
-              <table className="w-full text-xs" data-testid="requirements-table">
+              <table className="w-full table-fixed text-xs" data-testid="requirements-table">
+                <colgroup>
+                  <col className="w-[40%]" />
+                  <col className="w-[20%]" />
+                  <col className="w-[20%]" />
+                  <col className="w-[20%]" />
+                </colgroup>
                 <thead className="sticky top-0 border-b border-[var(--color-border)] bg-[var(--color-paper)]">
-                  <tr className="text-left text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">
-                    <th className="px-4 py-2">Section</th>
-                    <th className="px-4 py-2">Req ID</th>
-                    <th className="px-4 py-2">Title</th>
-                    <th className="px-4 py-2">Status</th>
-                    <th className="px-4 py-2 text-right">Review Status</th>
+                  <tr className="text-left text-[10px] font-semibold uppercase tracking-widest text-[var(--color-muted)]">
+                    <th className="px-4 py-1.5">Section</th>
+                    <th className="px-4 py-1.5">Req ID</th>
+                    <th className="px-4 py-1.5">Status</th>
+                    <th className="px-4 py-1.5 text-right">Review Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredRows.map((rec) => {
+                  {filteredRows.map((rec, i) => {
                     const isSelected = selectedRecord?.id === rec.id;
                     return (
                       <tr
                         key={`${rec.id}-${rec.pmPos}`}
                         data-testid="req-row"
                         className={[
-                          "border-b border-[var(--color-border)] last:border-0 transition-colors",
+                          "cursor-pointer border-b border-[var(--color-border)] last:border-0 transition-colors",
                           isSelected
-                            ? "bg-[var(--color-border)]/60"
-                            : "hover:bg-[var(--color-border)]/50",
+                            ? "bg-[var(--color-accent)]/10"
+                            : i % 2 === 1
+                              ? "bg-black/[0.018] hover:bg-[var(--color-border)]/70 dark:bg-white/[0.025] dark:hover:bg-white/[0.04]"
+                              : "hover:bg-[var(--color-border)]/50 dark:hover:bg-white/[0.03]",
                         ].join(" ")}
                       >
                         <td
-                          className="max-w-[180px] cursor-pointer truncate px-4 py-2.5 text-[var(--color-muted)]"
+                          className="truncate px-4 py-1.5 text-[var(--color-muted)]"
                           onClick={() => handleRowClick(rec)}
                         >
                           {rec.section}
                         </td>
                         <td
-                          className="cursor-pointer px-4 py-2.5 font-mono font-medium text-[var(--color-text)]"
+                          className="px-4 py-1.5 font-mono font-medium text-[var(--color-text)]"
                           onClick={() => handleRowClick(rec)}
                         >
                           {rec.id}
                         </td>
                         <td
-                          className="max-w-xs cursor-pointer truncate px-4 py-2.5 text-[var(--color-muted)]"
+                          className="px-4 py-2"
                           onClick={() => handleRowClick(rec)}
                         >
-                          {rec.title}
+                          <span className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-semibold uppercase tracking-wide ${badgeClass(rec.status, statuses)}`}>
+                            {statusLabel(rec.status, statuses)}
+                          </span>
                         </td>
-                        <td
-                          className="cursor-pointer px-4 py-2.5"
-                          onClick={() => handleRowClick(rec)}
-                        >
-                          <StatusBadge status={rec.status} statuses={statuses} />
-                        </td>
-                        <td className="px-4 py-2.5 text-right">
+                        <td className="px-4 py-1.5 text-right">
                           <ReviewStatusCell
                             reqId={rec.id}
                             detail={commentDetails[rec.id]}

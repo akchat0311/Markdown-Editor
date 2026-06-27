@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useUIStore, useTabStore, getActiveTab } from "@/stores";
 import { useUserSettingsStore } from "@/stores/userSettingsStore";
+import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
 import { getRecentFiles } from "@/persistence/recentFiles";
 import type { RecentFile } from "@/persistence/recentFiles";
 
@@ -36,6 +37,21 @@ function IconSun() {
       <line stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" x1="10.54" y1="4.46" x2="11.95" y2="3.05" />
       <line stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" x1="3.05" y1="11.95" x2="4.46" y2="10.54" />
     </svg>
+  );
+}
+
+// ── Save status indicator ─────────────────────────────────────────────────────
+
+function SaveStatus({ dirty }: { dirty: boolean }) {
+  return dirty ? (
+    <span className="flex shrink-0 items-center gap-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+      <span className="h-1 w-1 rounded-full bg-amber-400" aria-hidden="true" />
+      Unsaved changes
+    </span>
+  ) : (
+    <span className="shrink-0 text-[11px] font-medium text-green-600 dark:text-green-500">
+      ✓ All changes saved
+    </span>
   );
 }
 
@@ -214,6 +230,9 @@ export function Header({
   const tabState = useTabStore();
   const activeTab = getActiveTab(tabState);
   const setTabTitle = useTabStore((s) => s.setTabTitle);
+  const reviewLoaded = useReviewCommentsStore((s) => s.loaded);
+  const reviewDirty = useReviewCommentsStore((s) => s.isDirty);
+  const workspaceDirty = (activeTab?.isDirty ?? false) || (reviewLoaded && reviewDirty);
 
   // Close export dropdown on outside click
   useEffect(() => {
@@ -267,12 +286,8 @@ export function Header({
         spellCheck={false}
       />
 
-      {activeTab?.isDirty && (
-        <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-amber-600 dark:text-amber-400">
-          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-          Unsaved
-        </span>
-      )}
+      {/* Workspace save status */}
+      <SaveStatus dirty={workspaceDirty} />
 
       {/* Search button */}
       <button

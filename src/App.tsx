@@ -26,6 +26,7 @@ import {
   readHandleContent,
 } from "@/persistence/workspacePersistence";
 import { openReviewFile, writeToReviewHandle, saveReviewFileAs } from "@/persistence/reviewFilePersistence";
+import { saveWorkspace } from "@/persistence/workspaceSave";
 import { deriveReviewFileName, findReviewFile } from "@/persistence/documentBundleService";
 import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
 import { useCommentDrawerStore } from "@/stores/commentDrawerStore";
@@ -107,10 +108,16 @@ export default function App() {
     onUpdate: ({ editor }) => {
       if (sourceModeRef.current) return;
       if (isLoadingContentRef.current) return;
-      if (getActiveTab(useTabStore.getState())?.isReadOnly) return;
+      // Capture the tab ID synchronously — by the time the microtask runs the
+      // user may have already switched tabs, which would flip activeTabId.
+      // Using updateActiveTab() in the microtask would write Tab A's content
+      // into Tab B's store entry, causing silent data corruption on save.
+      const state = useTabStore.getState();
+      const tabId = state.activeTabId;
+      if (state.tabs.find((t) => t.id === tabId)?.isReadOnly) return;
       const json = editor.getJSON();
       queueMicrotask(() => {
-        updateActiveTabRef.current({
+        useTabStore.getState().updateTab(tabId, {
           markdown: serializeDocToMarkdown(json),
           isDirty: true,
         });
@@ -128,10 +135,47 @@ export default function App() {
   useEffect(() => {
     if (!editor || !activeTab) return;
     if (prevTabIdRef.current === activeTab.id) return;
+
+    const departingTabId = prevTabIdRef.current;
     prevTabIdRef.current = activeTab.id;
+
+    // Synchronously flush the departing tab's current editor content to the
+    // store before isLoadingContentRef blocks further onUpdate processing.
+    // This closes the window between the last onUpdate microtask and the
+    // setContent call below, ensuring we never lose the final edit of the
+    // departing tab even if the microtask fix somehow doesn't cover a case.
+    //
+    // Guard: skip the flush when isLoadingContentRef is already true — that
+    // means a previous tab switch started but its setContent was cancelled
+    // (A→B→C rapid switch). The editor still holds the content from two
+    // switches ago, so flushing here would corrupt the departing tab's store
+    // entry with another tab's content.
+    if (departingTabId && !sourceModeRef.current && !isLoadingContentRef.current) {
+      const store = useTabStore.getState();
+      const departing = store.tabs.find((t) => t.id === departingTabId);
+      if (departing && !departing.isReadOnly) {
+        store.updateTab(departingTabId, {
+          markdown: serializeDocToMarkdown(editor.getJSON()),
+          isDirty: true,
+        });
+      }
+    }
+
     isLoadingContentRef.current = true;
     const id = setTimeout(() => {
-      editor.commands.setContent(parseMarkdownToDoc(activeTab.markdown));
+      // Dispatch directly instead of editor.commands.setContent so we can set
+      // addToHistory:false. Without it the content-swap transaction enters
+      // ProseMirror's undo stack, meaning Ctrl-Z in Tab B can revert the
+      // editor to Tab A's content — which would then be saved to Tab B's file.
+      // preventUpdate:true suppresses the onUpdate emission; isLoadingContentRef
+      // is kept as a secondary guard for other code paths.
+      const json = parseMarkdownToDoc(activeTab.markdown);
+      const newDoc = editor.schema.nodeFromJSON(json);
+      const tr = editor.state.tr
+        .replaceWith(0, editor.state.doc.content.size, newDoc.content)
+        .setMeta("addToHistory", false)
+        .setMeta("preventUpdate", true);
+      editor.view.dispatch(tr);
       setTimeout(() => { isLoadingContentRef.current = false; }, 0);
     }, 0);
     return () => clearTimeout(id);
@@ -695,6 +739,19 @@ export default function App() {
     await flush();
   }, [handleSaveAs, flush]);
 
+  const handleSaveWorkspace = useCallback(async () => {
+    const tab = getActiveTab(useTabStore.getState());
+    if (!tab) return;
+    const { loaded: reviewLoaded, isDirty: reviewDirty } = useReviewCommentsStore.getState();
+    await saveWorkspace(
+      tab.isDirty,
+      reviewLoaded,
+      reviewDirty,
+      handleSave,
+      handleSaveReview,
+    );
+  }, [handleSave, handleSaveReview]);
+
   const handleOpenRecent = useCallback(async (recent: RecentFile) => {
     // Switch to existing open tab if already loaded
     const existing = useTabStore.getState().tabs.find((t) => t.fileName === recent.name);
@@ -850,6 +907,7 @@ export default function App() {
     handleOpenFolder,
     handleSave,
     handleSaveAs,
+    handleSaveWorkspace,
     toggleSourceMode,
     handleRequestClose,
   });
@@ -860,6 +918,7 @@ export default function App() {
       handleOpenFolder,
       handleSave,
       handleSaveAs,
+      handleSaveWorkspace,
       toggleSourceMode,
       handleRequestClose,
     };
@@ -900,7 +959,7 @@ export default function App() {
         if (e.shiftKey) {
           handlersRef.current.handleSaveAs();
         } else {
-          handlersRef.current.handleSave();
+          handlersRef.current.handleSaveWorkspace();
         }
         return;
       }

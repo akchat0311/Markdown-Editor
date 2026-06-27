@@ -39,6 +39,7 @@ function latestTimestamp(comments: ReviewComment[]): string {
 export function buildDashboardRows(
   reviewComments: Record<string, ReviewComment[] | number | undefined>,
   requirementRecords: RequirementRecord[],
+  sectionPosMap?: ReadonlyMap<string, number>,
 ): DashboardRow[] {
   const reqMap = new Map<string, RequirementRecord>();
   for (const r of requirementRecords) reqMap.set(r.id, r);
@@ -57,7 +58,7 @@ export function buildDashboardRows(
       closed: comments.filter((c) => c.status === "closed").length,
       total: comments.length,
       lastUpdated: latestTimestamp(comments),
-      pmPos: rec?.pmPos ?? null,
+      pmPos: rec?.pmPos ?? sectionPosMap?.get(targetId) ?? null,
     });
   }
   return rows;
