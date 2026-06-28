@@ -578,7 +578,7 @@ export function CommentDrawer({ record, onClose }: CommentDrawerProps) {
     filterTab === "all" ? comments : comments.filter((c) => c.status === filterTab);
 
   return (
-    <div className="flex w-80 shrink-0 flex-col border-l border-[var(--color-border)]">
+    <div className="flex h-full w-80 shrink-0 flex-col border-l border-[var(--color-border)]">
       {/* Header: req ID / section number + status chip (req only) + close button */}
       <div className="flex items-start justify-between border-b border-[var(--color-border)] px-4 py-3">
         <div className="flex flex-col gap-1">

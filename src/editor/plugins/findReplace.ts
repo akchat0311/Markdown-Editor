@@ -227,9 +227,21 @@ export function setFindQuery(
   view: MinimalView,
   params: { query: string; caseSensitive: boolean; wholeWord: boolean; useRegex: boolean }
 ): void {
-  view.dispatch(
-    view.state.tr.setMeta(findReplaceKey, { type: "setQuery", ...params } satisfies FindReplaceMeta)
-  );
+  const tr = view.state.tr.setMeta(findReplaceKey, { type: "setQuery", ...params } satisfies FindReplaceMeta);
+  // Scroll to the first match immediately so the user never has to manually
+  // hunt for it. findAllMatches also runs inside the plugin's apply; the
+  // duplication is intentional — we need the position before dispatch to set
+  // the selection on the same transaction. Two passes over the doc is
+  // negligible for any practical document size.
+  const regex = buildFindRegex(params.query, params.caseSensitive, params.wholeWord, params.useRegex);
+  if (regex) {
+    const first = findAllMatches(view.state.doc, regex)[0];
+    if (first) {
+      tr.setSelection(TextSelection.create(view.state.doc, first.from, first.to))
+        .scrollIntoView();
+    }
+  }
+  view.dispatch(tr);
 }
 
 export function navigateToMatch(view: MinimalView, index: number): void {
