@@ -90,6 +90,9 @@ export default function App() {
   sourceModeRef.current = sourceMode;
 
   const isLoadingContentRef = useRef(false);
+  // Tracks the previous sourceMode value so the exit effect can distinguish
+  // "just exited" from "was already false on mount / entering source mode".
+  const prevSourceModeRef = useRef(sourceMode);
 
   const [closeConfirm, setCloseConfirm] = useState<CloseConfirm | null>(null);
   const [restorePending, setRestorePending] = useState<{
@@ -180,6 +183,29 @@ export default function App() {
     }, 0);
     return () => clearTimeout(id);
   }, [editor, activeTab]);
+
+  // On source-mode exit: bring TipTap up to date with the store before the
+  // WYSIWYG view reappears. SourcePane now writes to the store on every keystroke,
+  // so tab.markdown is always authoritative. TipTap itself may be up to one
+  // debounce interval (250 ms) behind; this closes that window.
+  useEffect(() => {
+    const wasActive = prevSourceModeRef.current;
+    prevSourceModeRef.current = sourceMode;
+    // Only act on true → false transition. Also guards against initial render
+    // (wasActive=false) where no sync is needed.
+    if (!editor || !wasActive || sourceMode) return;
+    const tab = getActiveTab(useTabStore.getState());
+    if (!tab || tab.isReadOnly) return;
+    isLoadingContentRef.current = true;
+    const json = parseMarkdownToDoc(tab.markdown);
+    const newDoc = editor.schema.nodeFromJSON(json);
+    const tr = editor.state.tr
+      .replaceWith(0, editor.state.doc.content.size, newDoc.content)
+      .setMeta("addToHistory", false)
+      .setMeta("preventUpdate", true);
+    editor.view.dispatch(tr);
+    setTimeout(() => { isLoadingContentRef.current = false; }, 0);
+  }, [editor, sourceMode]);
 
   // Load the welcome template into the initial read-only tab.
   // Only fires once (editor dep); bails out if the user has already switched away.

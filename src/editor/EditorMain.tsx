@@ -4,7 +4,7 @@ import { EditorContext } from "./EditorContext";
 import { EditorToolbar } from "./Toolbar";
 import { SourcePane } from "./SourcePane";
 import { ContextMenu } from "./components/ContextMenu";
-import { useUIStore } from "@/stores";
+import { useTabStore, useUIStore } from "@/stores";
 
 interface ContextMenuState {
   x: number;
@@ -14,6 +14,7 @@ interface ContextMenuState {
 export function EditorMain() {
   const editor = useContext(EditorContext);
   const sourceMode = useUIStore((s) => s.sourceMode);
+  const activeTabId = useTabStore((s) => s.activeTabId);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   const handleContextMenu = useCallback(
@@ -42,8 +43,8 @@ export function EditorMain() {
         </div>
       </div>
 
-      {/* Source mode pane — synchronized textarea, Tiptap stays mounted above */}
-      {editor && <SourcePane editor={editor} active={sourceMode} />}
+      {/* Source mode pane — tab-aware: passes activeTabId for timer cancellation and store reads */}
+      {editor && <SourcePane editor={editor} active={sourceMode} activeTabId={activeTabId} />}
 
       {/* Right-click context menu */}
       {editor && contextMenu && (
