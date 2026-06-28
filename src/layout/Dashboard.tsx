@@ -112,7 +112,7 @@ export function Dashboard({
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {activeTab === "overview" && (
-            <OverviewTab onSwitchTab={setActiveTab} />
+            <OverviewTab onSwitchTab={(tabId) => setActiveTab(tabId as TabId)} />
           )}
           {activeTab === "requirements" && (
             <RequirementsTab

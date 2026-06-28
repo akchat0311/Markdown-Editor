@@ -13,8 +13,8 @@ function makeSaveFns() {
 // ── Cases from spec ────────────────────────────────────────────────────────────
 
 describe("saveWorkspace — save decision", () => {
-  let saveDoc: ReturnType<typeof vi.fn>;
-  let saveReview: ReturnType<typeof vi.fn>;
+  let saveDoc: ReturnType<typeof makeSaveFns>["saveDoc"];
+  let saveReview: ReturnType<typeof makeSaveFns>["saveReview"];
 
   beforeEach(() => {
     ({ saveDoc, saveReview } = makeSaveFns());

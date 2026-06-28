@@ -46,7 +46,6 @@ import { deriveOutline, flattenOutline } from "@/editor/utils/deriveOutline";
 import { collectReviewExportRows, generateReviewCsv, downloadReviewCsv } from "@/services/reviewExportService";
 import { useDocumentValidation } from "@/editor/utils/useDocumentValidation";
 import { useValidationStore } from "@/stores/validationStore";
-import { derivePattern, buildDetectionRegex } from "@/editor/utils/requirementOps";
 
 // Module-level stable extensions prevent Tiptap compareOptions from
 // calling setOptions() synchronously during React's render phase.

@@ -36,6 +36,7 @@ function makeComment(overrides: Partial<ReviewComment> = {}): ReviewComment {
 function makeRecord(id: string, overrides: Partial<RequirementRecord> = {}): RequirementRecord {
   return {
     id,
+    title: id,
     status: "draft",
     section: "1. Introduction",
     pmPos: 42,
