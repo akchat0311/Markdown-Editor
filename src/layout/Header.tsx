@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useUIStore, useTabStore, getActiveTab } from "@/stores";
 import { useUserSettingsStore } from "@/stores/userSettingsStore";
+import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
 import { getRecentFiles } from "@/persistence/recentFiles";
 import type { RecentFile } from "@/persistence/recentFiles";
 
@@ -36,6 +37,21 @@ function IconSun() {
       <line stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" x1="10.54" y1="4.46" x2="11.95" y2="3.05" />
       <line stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" x1="3.05" y1="11.95" x2="4.46" y2="10.54" />
     </svg>
+  );
+}
+
+// ── Save status indicator ─────────────────────────────────────────────────────
+
+function SaveStatus({ dirty }: { dirty: boolean }) {
+  return dirty ? (
+    <span className="flex shrink-0 items-center gap-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+      <span className="h-1 w-1 rounded-full bg-amber-400" aria-hidden="true" />
+      Unsaved changes
+    </span>
+  ) : (
+    <span className="shrink-0 text-[11px] font-medium text-green-600 dark:text-green-500">
+      ✓ All changes saved
+    </span>
   );
 }
 
@@ -188,8 +204,8 @@ export interface HeaderProps {
   onExportMarkdown?: () => void;
   onExportReviewsCsv?: () => void;
   onSearch?: () => void;
-  onRequirements?: () => void;
-  onQualityChecks?: () => void;
+  activeWorkspace?: "editor" | "dashboard";
+  onSwitchWorkspace?: (w: "editor" | "dashboard") => void;
 }
 
 export function Header({
@@ -204,8 +220,8 @@ export function Header({
   onExportMarkdown,
   onExportReviewsCsv,
   onSearch,
-  onRequirements,
-  onQualityChecks,
+  activeWorkspace,
+  onSwitchWorkspace,
 }: HeaderProps) {
   const [exportOpen, setExportOpen] = useState(false);
   const { theme, toggleTheme, sidebarOpen, toggleSidebar } = useUIStore();
@@ -214,6 +230,9 @@ export function Header({
   const tabState = useTabStore();
   const activeTab = getActiveTab(tabState);
   const setTabTitle = useTabStore((s) => s.setTabTitle);
+  const reviewLoaded = useReviewCommentsStore((s) => s.loaded);
+  const reviewDirty = useReviewCommentsStore((s) => s.isDirty);
+  const workspaceDirty = (activeTab?.isDirty ?? false) || (reviewLoaded && reviewDirty);
 
   // Close export dropdown on outside click
   useEffect(() => {
@@ -267,12 +286,8 @@ export function Header({
         spellCheck={false}
       />
 
-      {activeTab?.isDirty && (
-        <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-amber-600 dark:text-amber-400">
-          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-          Unsaved
-        </span>
-      )}
+      {/* Workspace save status */}
+      <SaveStatus dirty={workspaceDirty} />
 
       {/* Search button */}
       <button
@@ -288,34 +303,24 @@ export function Header({
         <kbd className="rounded bg-[var(--color-border)] px-1 font-mono text-[10px]">⌘K</kbd>
       </button>
 
-      {onRequirements && (
-        <button
-          className="flex h-7 shrink-0 items-center gap-2 rounded border border-[var(--color-border)] px-2 text-xs text-[var(--color-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors"
-          onClick={onRequirements}
-          title="Requirements Index (⌘⇧R)"
-        >
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-            <rect x="2" y="2" width="12" height="12" rx="1.5" />
-            <path d="M5 5.5h6M5 8h6M5 10.5h4" />
-          </svg>
-          <span>Requirements</span>
-          <kbd className="rounded bg-[var(--color-border)] px-1 font-mono text-[10px]">⌘⇧R</kbd>
-        </button>
-      )}
-
-      {onQualityChecks && (
-        <button
-          className="flex h-7 shrink-0 items-center gap-2 rounded border border-[var(--color-border)] px-2 text-xs text-[var(--color-muted)] hover:border-[var(--color-accent)] hover:text-[var(--color-text)] transition-colors"
-          onClick={onQualityChecks}
-          title="Quality Checks (⌘⇧Q)"
-        >
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M6 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V9" />
-            <path d="M9 7l2 2 4-5" />
-          </svg>
-          <span>Quality</span>
-          <kbd className="rounded bg-[var(--color-border)] px-1 font-mono text-[10px]">⌘⇧Q</kbd>
-        </button>
+      {onSwitchWorkspace && (
+        <div className="flex items-center rounded border border-[var(--color-border)] text-xs">
+          {(["editor", "dashboard"] as const).map((mode) => (
+            <button
+              key={mode}
+              onClick={() => onSwitchWorkspace(mode)}
+              className={[
+                "h-7 px-3 capitalize transition-colors first:rounded-l last:rounded-r",
+                activeWorkspace === mode
+                  ? "bg-[var(--color-accent)] font-medium text-white"
+                  : "text-[var(--color-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]",
+              ].join(" ")}
+              title={mode === "dashboard" ? "Dashboard (⌘⇧D)" : "Editor"}
+            >
+              {mode === "editor" ? "Editor" : "Dashboard"}
+            </button>
+          ))}
+        </div>
       )}
 
       <div className="mx-1 h-5 w-px bg-[var(--color-border)]" />

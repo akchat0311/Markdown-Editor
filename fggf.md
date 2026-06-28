@@ -1,6 +1,6 @@
 # 1. Welcome to MD Editor
 
-A WYSIWYG Markdown editor with first-class support for Mermaid diagrams, LaTeX math, tables, callouts, and rich inline formatting.
+A WYSIWYG Markdown editor with first-class support for Mermaid.   diagrams, LaTeX math, tables, callouts, and rich inline formatti.  ng.
 
 Type `/` on any new line to insert blocks. Press **⌘N** to start a new document.
 
@@ -12,7 +12,7 @@ Type `/` on any new line to insert blocks. Press **⌘N** to start a new documen
 
 ## 1.1 Tables
 
-Tables support per-column horizontal alignment (`| :--- |`, `| :---: |`, `| ---: |`) via the bubble toolbar or right-click menu.
+Tables support per-column horizonta. l alignment (`| :--- |`, `| :---: |`, `| ---: |`) via the bubble toolbar or right-click menu.
 
 | Feature | Shortcut | Notes |
 | :- | :-: | -: |
@@ -31,27 +31,33 @@ Tables support per-column horizontal alignment (`| :--- |`, `| :---: |`, `| ---:
 
 Headings can encode requirement IDs — useful for specification documents.
 
-### REQ_002 [Draft]
+### REQ_001 [Draft]
 
-All API responses shall include a `Content-Security-Policy` header.
+All API responses shoud include a `Content-Security-Policy` header.
 
 ---
 
 *Open **⌘N** to create a new document, or **⌘O** to open an existing Markdown file.*
 
-### REQ_001 [Draft]
+### REQ_002 [Draft]
 
 The system shall authenticate users via OAuth 2.0 before granting access to protected resources.
+
+$$
+TqCalc_TCOT_CalcMode = TqCalc_TCOT_CalcMode + TqCalc_TCOT_CalcMode+ TqCalc_TCOT_CalcMode+ TqCalc_TCOT_CalcMode
+$$
 
 ### REQ_003 [Draft]
 
 ### REQ_004 [Draft]
 
-### REQ_006 [Draft]
-
 ### REQ_005 [Draft]
 
-### REQ_010 [Draft]
+### REQ_006 [Draft]
+
+can
+
+### REQ_007 [Draft]
 
 ### REQ_008 [Draft]
 

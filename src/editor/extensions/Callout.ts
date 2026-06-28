@@ -34,6 +34,14 @@ export const Callout = Node.create<CalloutOptions>({
         parseHTML: (el) => el.getAttribute("data-callout-type") ?? DEFAULT_CALLOUT_TYPE,
         renderHTML: (attrs) => ({ "data-callout-type": attrs.type }),
       },
+      // Original marker word as written by the author (e.g. "NOTE", "note", "CAUTION").
+      // Null when the callout was created via the UI (falls back to canonical uppercase).
+      marker: {
+        default: null,
+        parseHTML: (el) => el.getAttribute("data-callout-marker") || null,
+        renderHTML: (attrs) =>
+          attrs.marker ? { "data-callout-marker": attrs.marker } : {},
+      },
     };
   },
 

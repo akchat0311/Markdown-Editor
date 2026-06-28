@@ -264,15 +264,19 @@ body {
 
 .math-block-rendered {
   padding: 1.5em 1.25em;
-  display: flex;
-  justify-content: center;
   background-color: var(--color-paper);
   overflow-x: auto;
 }
 
-/* KaTeX display math — center the equation block */
+/* Center when fits; auto-margins collapse to 0 on overflow so the left edge is always visible */
 .math-block-rendered .katex-display {
-  margin: 0;
+  width: fit-content;
+  margin: 0 auto;
+}
+
+/* Reduce display math font size for engineering documents (KaTeX default is 1.21em) */
+.math-block-rendered .katex {
+  font-size: 1.05em;
 }
 
 /* ── Find/Replace match highlighting ─────────────────────────────────────── */
@@ -386,6 +390,17 @@ body {
   background: color-mix(in srgb, var(--color-border) 40%, transparent);
   border-radius: 3px;
   padding: 0 2px;
+  user-select: none;
+}
+
+/* Link definition block — mirrors raw-html-block visual treatment */
+.ProseMirror div.link-definition {
+  background-color: transparent;
+  color: var(--color-muted);
+  border: 1px dashed var(--color-border);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.8em;
+  padding: 0.25em 0.5em;
   user-select: none;
 }
 

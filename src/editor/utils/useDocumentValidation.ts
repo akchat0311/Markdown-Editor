@@ -6,9 +6,9 @@ import { deriveOutline, flattenOutline } from "./deriveOutline";
 import { derivePattern, buildDetectionRegex, extractStatusText } from "./requirementOps";
 import { getNodeSectionRange } from "./outlineOps";
 import { useStatusConfigStore } from "@/stores/statusConfigStore";
-import { validateDocument } from "@/services/documentValidationService";
 import type { RequirementRef } from "@/services/documentValidationService";
 import type { ValidationIssue } from "@/types/validation";
+import { runAllValidations } from "@/validation/engine";
 
 const DEBOUNCE_MS = 500;
 
@@ -85,7 +85,7 @@ export function useDocumentValidation(
         });
       }
 
-      setIssues(validateDocument(requirements, validAliases));
+      setIssues(runAllValidations(requirements, validAliases));
     }, DEBOUNCE_MS);
 
     return () => {

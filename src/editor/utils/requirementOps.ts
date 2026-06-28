@@ -180,6 +180,8 @@ export interface RequirementRecord {
   section: string;
   /** ProseMirror absolute offset for click-to-navigate. */
   pmPos: number;
+  /** Heading label with ID prefix and optional " [Status]" suffix stripped. */
+  title: string;
 }
 
 export interface RequirementIndex {
@@ -262,7 +264,10 @@ export function buildRequirementIndex(
         ? resolveRequirementStatus(rawStatusText, statuses)
         : "unknown";
 
-      requirements.push({ id, status, section, pmPos: node.pmPos });
+      // Derive title: strip "ID " prefix and optional " [Status]" suffix from the label.
+      const titleRaw = rawLabel.slice(id.length).replace(/\s*\[[^\]]*\]\s*$/, "").trim();
+
+      requirements.push({ id, status, section, pmPos: node.pmPos, title: titleRaw });
     }
   }
 

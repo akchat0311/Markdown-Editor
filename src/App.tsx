@@ -26,6 +26,7 @@ import {
   readHandleContent,
 } from "@/persistence/workspacePersistence";
 import { openReviewFile, writeToReviewHandle, saveReviewFileAs } from "@/persistence/reviewFilePersistence";
+import { saveWorkspace } from "@/persistence/workspaceSave";
 import { deriveReviewFileName, findReviewFile } from "@/persistence/documentBundleService";
 import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
 import { useCommentDrawerStore } from "@/stores/commentDrawerStore";
@@ -37,8 +38,7 @@ import { addRecentFile, removeRecentFile } from "@/persistence/recentFiles";
 import type { RecentFile } from "@/persistence/recentFiles";
 import { ResizeHandle } from "@/layout/ResizeHandle";
 import { OutlinePanel } from "@/layout/OutlinePanel";
-import { RequirementsIndex } from "@/layout/RequirementsIndex";
-import { QualityChecksPanel } from "@/layout/QualityChecksPanel";
+import { Dashboard } from "@/layout/Dashboard";
 import { WorkspacePanel } from "@/layout/WorkspacePanel";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useConfigStore } from "@/stores/configStore";
@@ -90,6 +90,9 @@ export default function App() {
   sourceModeRef.current = sourceMode;
 
   const isLoadingContentRef = useRef(false);
+  // Tracks the previous sourceMode value so the exit effect can distinguish
+  // "just exited" from "was already false on mount / entering source mode".
+  const prevSourceModeRef = useRef(sourceMode);
 
   const [closeConfirm, setCloseConfirm] = useState<CloseConfirm | null>(null);
   const [restorePending, setRestorePending] = useState<{
@@ -98,8 +101,7 @@ export default function App() {
   } | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findShowReplace, setFindShowReplace] = useState(false);
-  const [reqIndexOpen, setReqIndexOpen] = useState(false);
-  const [qualityOpen, setQualityOpen] = useState(false);
+  const [activeWorkspace, setActiveWorkspace] = useState<"editor" | "dashboard">("editor");
 
   const initialDoc = parseMarkdownToDoc(activeTab?.markdown ?? "");
 
@@ -109,10 +111,16 @@ export default function App() {
     onUpdate: ({ editor }) => {
       if (sourceModeRef.current) return;
       if (isLoadingContentRef.current) return;
-      if (getActiveTab(useTabStore.getState())?.isReadOnly) return;
+      // Capture the tab ID synchronously — by the time the microtask runs the
+      // user may have already switched tabs, which would flip activeTabId.
+      // Using updateActiveTab() in the microtask would write Tab A's content
+      // into Tab B's store entry, causing silent data corruption on save.
+      const state = useTabStore.getState();
+      const tabId = state.activeTabId;
+      if (state.tabs.find((t) => t.id === tabId)?.isReadOnly) return;
       const json = editor.getJSON();
       queueMicrotask(() => {
-        updateActiveTabRef.current({
+        useTabStore.getState().updateTab(tabId, {
           markdown: serializeDocToMarkdown(json),
           isDirty: true,
         });
@@ -130,14 +138,74 @@ export default function App() {
   useEffect(() => {
     if (!editor || !activeTab) return;
     if (prevTabIdRef.current === activeTab.id) return;
+
+    const departingTabId = prevTabIdRef.current;
     prevTabIdRef.current = activeTab.id;
+
+    // Synchronously flush the departing tab's current editor content to the
+    // store before isLoadingContentRef blocks further onUpdate processing.
+    // This closes the window between the last onUpdate microtask and the
+    // setContent call below, ensuring we never lose the final edit of the
+    // departing tab even if the microtask fix somehow doesn't cover a case.
+    //
+    // Guard: skip the flush when isLoadingContentRef is already true — that
+    // means a previous tab switch started but its setContent was cancelled
+    // (A→B→C rapid switch). The editor still holds the content from two
+    // switches ago, so flushing here would corrupt the departing tab's store
+    // entry with another tab's content.
+    if (departingTabId && !sourceModeRef.current && !isLoadingContentRef.current) {
+      const store = useTabStore.getState();
+      const departing = store.tabs.find((t) => t.id === departingTabId);
+      if (departing && !departing.isReadOnly) {
+        store.updateTab(departingTabId, {
+          markdown: serializeDocToMarkdown(editor.getJSON()),
+          isDirty: true,
+        });
+      }
+    }
+
     isLoadingContentRef.current = true;
     const id = setTimeout(() => {
-      editor.commands.setContent(parseMarkdownToDoc(activeTab.markdown));
+      // Dispatch directly instead of editor.commands.setContent so we can set
+      // addToHistory:false. Without it the content-swap transaction enters
+      // ProseMirror's undo stack, meaning Ctrl-Z in Tab B can revert the
+      // editor to Tab A's content — which would then be saved to Tab B's file.
+      // preventUpdate:true suppresses the onUpdate emission; isLoadingContentRef
+      // is kept as a secondary guard for other code paths.
+      const json = parseMarkdownToDoc(activeTab.markdown);
+      const newDoc = editor.schema.nodeFromJSON(json);
+      const tr = editor.state.tr
+        .replaceWith(0, editor.state.doc.content.size, newDoc.content)
+        .setMeta("addToHistory", false)
+        .setMeta("preventUpdate", true);
+      editor.view.dispatch(tr);
       setTimeout(() => { isLoadingContentRef.current = false; }, 0);
     }, 0);
     return () => clearTimeout(id);
   }, [editor, activeTab]);
+
+  // On source-mode exit: bring TipTap up to date with the store before the
+  // WYSIWYG view reappears. SourcePane now writes to the store on every keystroke,
+  // so tab.markdown is always authoritative. TipTap itself may be up to one
+  // debounce interval (250 ms) behind; this closes that window.
+  useEffect(() => {
+    const wasActive = prevSourceModeRef.current;
+    prevSourceModeRef.current = sourceMode;
+    // Only act on true → false transition. Also guards against initial render
+    // (wasActive=false) where no sync is needed.
+    if (!editor || !wasActive || sourceMode) return;
+    const tab = getActiveTab(useTabStore.getState());
+    if (!tab || tab.isReadOnly) return;
+    isLoadingContentRef.current = true;
+    const json = parseMarkdownToDoc(tab.markdown);
+    const newDoc = editor.schema.nodeFromJSON(json);
+    const tr = editor.state.tr
+      .replaceWith(0, editor.state.doc.content.size, newDoc.content)
+      .setMeta("addToHistory", false)
+      .setMeta("preventUpdate", true);
+    editor.view.dispatch(tr);
+    setTimeout(() => { isLoadingContentRef.current = false; }, 0);
+  }, [editor, sourceMode]);
 
   // Load the welcome template into the initial read-only tab.
   // Only fires once (editor dep); bails out if the user has already switched away.
@@ -353,7 +421,7 @@ export default function App() {
   const closeInlineDrawer = useCommentDrawerStore((s) => s.close);
 
   const inlineDrawerRecord: RequirementRecord | null = inlineDrawerReqId
-    ? { id: inlineDrawerReqId, status: inlineDrawerStatus, section: "", pmPos: 0 }
+    ? { id: inlineDrawerReqId, status: inlineDrawerStatus, section: "", pmPos: 0, title: "" }
     : null;
 
   // ── Document validation ───────────────────────────────────────────────────────
@@ -378,24 +446,6 @@ export default function App() {
 
   // ── Quality checks navigation ────────────────────────────────────────────────
 
-  const handleQualityNavigate = useCallback(
-    (targetId: string) => {
-      if (!editor) return;
-      const { requirementPattern } = useConfigStore.getState();
-      if (!requirementPattern) return;
-      const derived = derivePattern(requirementPattern.example);
-      if (!derived) return;
-      const regex = buildDetectionRegex(derived.prefix);
-      const flat = flattenOutline(deriveOutline(editor));
-      const target = flat.find((n) => {
-        const m = n.label.match(regex);
-        return m ? derived.prefix + m[1] === targetId : false;
-      });
-      if (!target) return;
-      editor.chain().focus().setTextSelection(target.pmPos + 1).scrollIntoView().run();
-    },
-    [editor],
-  );
 
   // ── Review comments ──────────────────────────────────────────────────────────
 
@@ -715,6 +765,19 @@ export default function App() {
     await flush();
   }, [handleSaveAs, flush]);
 
+  const handleSaveWorkspace = useCallback(async () => {
+    const tab = getActiveTab(useTabStore.getState());
+    if (!tab) return;
+    const { loaded: reviewLoaded, isDirty: reviewDirty } = useReviewCommentsStore.getState();
+    await saveWorkspace(
+      tab.isDirty,
+      reviewLoaded,
+      reviewDirty,
+      handleSave,
+      handleSaveReview,
+    );
+  }, [handleSave, handleSaveReview]);
+
   const handleOpenRecent = useCallback(async (recent: RecentFile) => {
     // Switch to existing open tab if already loaded
     const existing = useTabStore.getState().tabs.find((t) => t.fileName === recent.name);
@@ -870,6 +933,7 @@ export default function App() {
     handleOpenFolder,
     handleSave,
     handleSaveAs,
+    handleSaveWorkspace,
     toggleSourceMode,
     handleRequestClose,
   });
@@ -880,6 +944,7 @@ export default function App() {
       handleOpenFolder,
       handleSave,
       handleSaveAs,
+      handleSaveWorkspace,
       toggleSourceMode,
       handleRequestClose,
     };
@@ -920,7 +985,7 @@ export default function App() {
         if (e.shiftKey) {
           handlersRef.current.handleSaveAs();
         } else {
-          handlersRef.current.handleSave();
+          handlersRef.current.handleSaveWorkspace();
         }
         return;
       }
@@ -942,20 +1007,28 @@ export default function App() {
         setFindOpenRef.current(true);
         return;
       }
-      if (e.key === "r" && e.shiftKey) {
+      if (e.key.toLowerCase() === "d" && e.shiftKey) {
         e.preventDefault();
-        setReqIndexOpen((o) => !o);
-        return;
-      }
-      if (e.key.toLowerCase() === "q" && e.shiftKey) {
-        e.preventDefault();
-        setQualityOpen((o) => !o);
+        setActiveWorkspace((w) => w === "editor" ? "dashboard" : "editor");
         return;
       }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
+
+  // ── Dashboard navigation ─────────────────────────────────────────────────────
+
+  const handleDashboardNavigate = useCallback(
+    (pmPos: number) => {
+      setActiveWorkspace("editor");
+      if (!editor) return;
+      setTimeout(() => {
+        editor.chain().focus().setTextSelection(pmPos + 1).scrollIntoView().run();
+      }, 50);
+    },
+    [editor],
+  );
 
   // Apply theme class to <html>
   useEffect(() => {
@@ -984,8 +1057,8 @@ export default function App() {
               new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true })
             )
           }
-          onRequirements={() => setReqIndexOpen((o) => !o)}
-          onQualityChecks={() => setQualityOpen((o) => !o)}
+          activeWorkspace={activeWorkspace}
+          onSwitchWorkspace={setActiveWorkspace}
         />
 
         <TabBar onRequestClose={handleRequestClose} />
@@ -1023,48 +1096,43 @@ export default function App() {
         )}
 
         <div className="flex min-h-0 flex-1">
-          {sidebarOpen && (
+          {activeWorkspace === "editor" ? (
             <>
-              <div className="flex shrink-0 flex-col overflow-hidden" style={{ width: sidebarWidth }}>
-                {workspace.dirHandle && (
-                  <WorkspacePanel
-                    onOpenFile={handleOpenFromWorkspace}
-                    onOpenFolder={handleOpenFolder}
-                  />
-                )}
-                <OutlinePanel width={sidebarWidth} noWidthStyle />
+              {sidebarOpen && (
+                <>
+                  <div className="flex shrink-0 flex-col overflow-hidden" style={{ width: sidebarWidth }}>
+                    {workspace.dirHandle && (
+                      <WorkspacePanel
+                        onOpenFile={handleOpenFromWorkspace}
+                        onOpenFolder={handleOpenFolder}
+                      />
+                    )}
+                    <OutlinePanel width={sidebarWidth} noWidthStyle />
+                  </div>
+                  <ResizeHandle onDelta={adjustSidebar} />
+                </>
+              )}
+              <div className="relative flex flex-1 min-w-0">
+                <EditorMain />
+                <FindReplaceBar
+                  open={findOpen}
+                  showReplace={findShowReplace}
+                  onClose={() => setFindOpen(false)}
+                />
               </div>
-              <ResizeHandle onDelta={adjustSidebar} />
             </>
-          )}
-          <div className="relative flex flex-1 min-w-0">
-            <EditorMain />
-            <FindReplaceBar
-              open={findOpen}
-              showReplace={findShowReplace}
-              onClose={() => setFindOpen(false)}
+          ) : (
+            <Dashboard
+              onNavigateToEditor={handleDashboardNavigate}
+              onLoadReview={handleLoadReview}
+              onSaveReview={handleSaveReview}
+              onSaveReviewAs={handleSaveReviewAs}
             />
-          </div>
+          )}
         </div>
 
         <StatusBar onSaveReview={handleSaveReview} onSaveReviewAs={handleSaveReviewAs} />
       </div>
-
-      {/* Requirements Index */}
-      <RequirementsIndex
-        open={reqIndexOpen}
-        onClose={() => setReqIndexOpen(false)}
-        onLoadReview={handleLoadReview}
-        onSaveReview={handleSaveReview}
-        onSaveReviewAs={handleSaveReviewAs}
-      />
-
-      {/* Quality Checks panel */}
-      <QualityChecksPanel
-        open={qualityOpen}
-        onClose={() => setQualityOpen(false)}
-        onNavigate={handleQualityNavigate}
-      />
 
       {/* Inline comment drawer — opened by clicking badges on requirement headings */}
       {inlineDrawerRecord && (

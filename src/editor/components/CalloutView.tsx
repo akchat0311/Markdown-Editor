@@ -22,7 +22,7 @@ export function CalloutView({ node, updateAttributes, selected }: ReactNodeViewP
       <select
         contentEditable={false}
         value={type}
-        onChange={(e) => updateAttributes({ type: e.target.value })}
+        onChange={(e) => updateAttributes({ type: e.target.value, marker: null })}
         className="h-fit shrink-0 rounded border border-[var(--color-border)] bg-transparent px-1 py-0.5 text-xs"
         aria-label="Callout type"
       >

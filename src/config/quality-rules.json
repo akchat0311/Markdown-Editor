@@ -1,0 +1,151 @@
+{
+  "_version": 1,
+  "rules": {
+    "requirementOrder": {
+      "id": "requirementOrder",
+      "category": "structure",
+      "enabled": true,
+      "severity": "warning",
+      "title": "Requirement Ordering",
+      "description": "Requirements should appear in ascending numeric order within the document."
+    },
+    "duplicateId": {
+      "id": "duplicateId",
+      "category": "structure",
+      "enabled": true,
+      "severity": "error",
+      "title": "Duplicate Requirement IDs",
+      "description": "Each requirement ID must be unique within the document."
+    },
+    "missingStatus": {
+      "id": "missingStatus",
+      "category": "completeness",
+      "enabled": true,
+      "severity": "warning",
+      "title": "Missing Status",
+      "description": "Each requirement must declare its lifecycle status using a [Status] bracket."
+    },
+    "emptyBody": {
+      "id": "emptyBody",
+      "category": "completeness",
+      "enabled": true,
+      "severity": "warning",
+      "title": "Empty Requirement Body",
+      "description": "Each requirement should contain descriptive body content."
+    },
+    "weakModal": {
+      "id": "weakModal",
+      "category": "language",
+      "enabled": true,
+      "severity": "warning",
+      "title": "Weak Modal Verbs",
+      "description": "Mandatory requirements should use SHALL. Weak modals such as 'should' or 'may' make obligations unclear and harder to verify.",
+      "terms": ["should", "may", "can", "could", "might", "would", "ought to"],
+      "message": "{id}: '{term}' found — use SHALL for mandatory requirements."
+    },
+    "ambiguousWords": {
+      "id": "ambiguousWords",
+      "category": "language",
+      "enabled": true,
+      "severity": "warning",
+      "title": "Ambiguous Words",
+      "description": "Vague terms make requirements difficult to verify. Replace with measurable, testable criteria.",
+      "terms": [
+        "appropriate", "adequate", "sufficient", "reasonable", "as necessary",
+        "flexible", "extensible", "robust", "fast", "user-friendly", "easy",
+        "simple", "etc."
+      ],
+      "message": "{id}: Ambiguous term '{term}' — replace with a measurable criterion."
+    },
+    "forbiddenTerms": {
+      "id": "forbiddenTerms",
+      "category": "completeness",
+      "enabled": true,
+      "severity": "error",
+      "title": "Forbidden Terms",
+      "description": "Placeholder terms indicate incomplete requirements that must be resolved before release.",
+      "terms": ["TBD", "TBC", "FIXME", "TODO", "placeholder", "N/A"],
+      "message": "{id}: Forbidden term '{term}' must be resolved before release."
+    },
+    "wordCount": {
+      "id": "wordCount",
+      "category": "structure",
+      "enabled": true,
+      "severity": "warning",
+      "title": "Requirement Length",
+      "description": "Requirements exceeding the word limit may be too complex to verify. Consider splitting into smaller, independent requirements.",
+      "maxWords": 150,
+      "message": "{id} is too long ({actual} words, limit {maxWords}). Consider splitting."
+    },
+    "multipleShall": {
+      "id": "multipleShall",
+      "category": "structure",
+      "enabled": true,
+      "severity": "warning",
+      "title": "Multiple SHALL Statements",
+      "description": "Each requirement should express a single obligation. Multiple SHALL statements may indicate the requirement should be split.",
+      "maxCount": 1,
+      "message": "{id} contains {count} SHALL statements. Each requirement should express one obligation."
+    },
+    "vagueQuantifiers": {
+      "id": "vagueQuantifiers",
+      "category": "language",
+      "enabled": true,
+      "severity": "warning",
+      "title": "Vague Quantifiers",
+      "description": "Avoid non-measurable quantities that cannot be objectively verified.",
+      "terms": [
+        "some",
+        "many",
+        "few",
+        "several",
+        "various",
+        "numerous",
+        "multiple",
+        "adequate number of",
+        "sufficient number of",
+        "a number of"
+      ],
+      "message": "{id}: Vague quantifier '{term}' found. Replace with a measurable quantity."
+    },
+    "escapeClauses": {
+      "id": "escapeClauses",
+      "category": "language",
+      "enabled": true,
+      "severity": "warning",
+      "title": "Escape Clauses",
+      "description": "Avoid wording that weakens or makes a requirement conditional without objective criteria.",
+      "terms": [
+        "if possible",
+        "where appropriate",
+        "where practical",
+        "as appropriate",
+        "as necessary",
+        "if required",
+        "if feasible",
+        "when feasible",
+        "where applicable"
+      ],
+      "message": "{id}: Escape clause '{term}' found. Replace with an objective, verifiable condition."
+    },
+    "undefinedAcronyms": {
+      "id": "undefinedAcronyms",
+      "category": "consistency",
+      "enabled": true,
+      "severity": "warning",
+      "title": "Undefined Acronyms",
+      "description": "Acronyms should be defined before first use. Define with the pattern: Full Name (ACRONYM).",
+      "ignored": ["SHALL", "SHOULD", "MAY", "TODO", "REQ", "ID"],
+      "message": "{id}: Acronym '{term}' is used before being defined."
+    },
+    "multipleSentences": {
+      "id": "multipleSentences",
+      "category": "structure",
+      "enabled": true,
+      "severity": "warning",
+      "title": "Multiple Sentences",
+      "description": "Requirements should normally contain a single sentence expressing one obligation.",
+      "message": "{id} contains {count} sentences. Consider splitting it into separate requirements."
+    }
+  }
+}
