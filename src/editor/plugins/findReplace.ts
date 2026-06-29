@@ -222,23 +222,20 @@ export const findReplacePlugin = new Plugin<FindReplacePluginState>({
 // ── View helpers used by the React bar ────────────────────────────────────────
 
 type MinimalView = Pick<EditorView, "state" | "dispatch">;
+type ScrollableView = Pick<EditorView, "state" | "domAtPos">;
 
 export function setFindQuery(
   view: MinimalView,
   params: { query: string; caseSensitive: boolean; wholeWord: boolean; useRegex: boolean }
 ): void {
   const tr = view.state.tr.setMeta(findReplaceKey, { type: "setQuery", ...params } satisfies FindReplaceMeta);
-  // Scroll to the first match immediately so the user never has to manually
-  // hunt for it. findAllMatches also runs inside the plugin's apply; the
-  // duplication is intentional — we need the position before dispatch to set
-  // the selection on the same transaction. Two passes over the doc is
-  // negligible for any practical document size.
+  // Move the PM selection to the first match so that when the find bar closes
+  // and focus returns to the editor, the cursor lands at the right position.
   const regex = buildFindRegex(params.query, params.caseSensitive, params.wholeWord, params.useRegex);
   if (regex) {
     const first = findAllMatches(view.state.doc, regex)[0];
     if (first) {
-      tr.setSelection(TextSelection.create(view.state.doc, first.from, first.to))
-        .scrollIntoView();
+      tr.setSelection(TextSelection.create(view.state.doc, first.from, first.to));
     }
   }
   view.dispatch(tr);
@@ -251,9 +248,28 @@ export function navigateToMatch(view: MinimalView, index: number): void {
   const match = ps.matches[index];
   const tr = view.state.tr
     .setMeta(findReplaceKey, { type: "navigate", currentMatchIndex: index } satisfies FindReplaceMeta)
-    .setSelection(TextSelection.create(view.state.doc, match.from, match.to))
-    .scrollIntoView();
+    .setSelection(TextSelection.create(view.state.doc, match.from, match.to));
   view.dispatch(tr);
+}
+
+// Scroll the active match into view using native DOM.
+//
+// ProseMirror's tr.scrollIntoView() cannot fire reliably while the find input
+// has focus: decoration rebuilds split text nodes, which detaches Chrome's
+// preserved document-selection focusNode, causing scrollToSelection()'s guard
+// to bail silently. All navigation paths (new query, next, previous) call this
+// helper after dispatch so the scroll mechanism is identical everywhere.
+export function scrollActiveMatchIntoView(view: ScrollableView): void {
+  const ps = findReplaceKey.getState(view.state);
+  if (!ps || ps.currentMatchIndex < 0 || ps.matches.length === 0) return;
+  const match = ps.matches[ps.currentMatchIndex];
+  try {
+    const { node } = view.domAtPos(match.from);
+    const el = node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as Element);
+    el?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  } catch {
+    // domAtPos can throw for out-of-range positions; scroll is best-effort
+  }
 }
 
 export function replaceCurrent(view: MinimalView, replacement: string): void {

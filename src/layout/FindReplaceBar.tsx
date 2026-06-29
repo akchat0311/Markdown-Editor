@@ -12,6 +12,7 @@ import {
   findReplaceKey,
   setFindQuery,
   navigateToMatch,
+  scrollActiveMatchIntoView,
   replaceCurrent,
   replaceAll,
   clearFind,
@@ -66,6 +67,7 @@ export function FindReplaceBar({ open, showReplace, onClose }: Props) {
         setRegexError(false);
       }
       setFindQuery(editor.view, { query: q, caseSensitive: cs, wholeWord: ww, useRegex: rx });
+      scrollActiveMatchIntoView(editor.view);
     },
     [editor]
   );
@@ -89,12 +91,14 @@ export function FindReplaceBar({ open, showReplace, onClose }: Props) {
     if (!editor || matchCount === 0) return;
     const next = currentIndex < 0 ? 0 : (currentIndex + 1) % matchCount;
     navigateToMatch(editor.view, next);
+    scrollActiveMatchIntoView(editor.view);
   }, [editor, currentIndex, matchCount]);
 
   const goPrev = useCallback(() => {
     if (!editor || matchCount === 0) return;
     const prev = currentIndex <= 0 ? matchCount - 1 : currentIndex - 1;
     navigateToMatch(editor.view, prev);
+    scrollActiveMatchIntoView(editor.view);
   }, [editor, currentIndex, matchCount]);
 
   const handleReplaceOne = useCallback(() => {
