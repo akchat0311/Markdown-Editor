@@ -1,4 +1,5 @@
 import type qualityRules from "@/config/quality-rules.json";
+import type { JSONContent } from "@tiptap/core";
 import type { ValidationSeverity, ValidationCategory, ValidationIssue } from "@/types/validation";
 import type { RequirementRef } from "@/services/documentValidationService";
 
@@ -54,5 +55,9 @@ export interface AcronymRuleConfig extends MessageRuleConfig {
  */
 export interface DocumentQualityRule {
   readonly id: RuleId;
-  check(requirements: ReadonlyArray<RequirementRef>, config: unknown): ValidationIssue[];
+  check(
+    requirements: ReadonlyArray<RequirementRef>,
+    config: unknown,
+    docContent?: ReadonlyArray<JSONContent>,
+  ): ValidationIssue[];
 }

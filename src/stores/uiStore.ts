@@ -7,6 +7,7 @@ interface UIState {
   theme: Theme;
   sidebarOpen: boolean;
   sidebarWidth: number;
+  rightPanelWidth: number;
   sourceMode: boolean;
 }
 
@@ -17,6 +18,7 @@ interface UIActions {
   toggleSidebar(): void;
   setSidebarWidth(width: number): void;
   adjustSidebar(delta: number): void;
+  adjustRightPanel(delta: number): void;
   setSourceMode(on: boolean): void;
   toggleSourceMode(): void;
 }
@@ -25,6 +27,8 @@ export type UIStore = UIState & UIActions;
 
 const MIN_SIDEBAR = 160;
 const MAX_SIDEBAR = 500;
+const MIN_RIGHT_PANEL = 260;
+const MAX_RIGHT_PANEL = 480;
 
 export const useUIStore = create<UIStore>()(
   persist(
@@ -32,6 +36,7 @@ export const useUIStore = create<UIStore>()(
       theme: "light",
       sidebarOpen: true,
       sidebarWidth: 240,
+      rightPanelWidth: 320,
       sourceMode: false,
 
       setTheme: (theme) => set({ theme }),
@@ -49,6 +54,13 @@ export const useUIStore = create<UIStore>()(
             Math.min(MAX_SIDEBAR, s.sidebarWidth + delta)
           ),
         })),
+      adjustRightPanel: (delta) =>
+        set((s) => ({
+          rightPanelWidth: Math.max(
+            MIN_RIGHT_PANEL,
+            Math.min(MAX_RIGHT_PANEL, s.rightPanelWidth + delta)
+          ),
+        })),
 
       setSourceMode: (sourceMode) => set({ sourceMode }),
       toggleSourceMode: () => set((s) => ({ sourceMode: !s.sourceMode })),
@@ -59,6 +71,7 @@ export const useUIStore = create<UIStore>()(
         theme: s.theme,
         sidebarOpen: s.sidebarOpen,
         sidebarWidth: s.sidebarWidth,
+        rightPanelWidth: s.rightPanelWidth,
       }),
     }
   )

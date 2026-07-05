@@ -135,8 +135,8 @@
       "severity": "warning",
       "title": "Undefined Acronyms",
       "description": "Acronyms should be defined before first use. Define with the pattern: Full Name (ACRONYM).",
-      "ignored": ["SHALL", "SHOULD", "MAY", "TODO", "REQ", "ID"],
-      "message": "{id}: Acronym '{term}' is used before being defined."
+      "ignored": ["TBD", "TBC", "TODO", "REQ", "ID"],
+      "message": "{id}: '{term}' appears to be an undefined acronym. Define it as: Full Name ({term})."
     },
     "multipleSentences": {
       "id": "multipleSentences",

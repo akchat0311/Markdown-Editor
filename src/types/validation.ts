@@ -16,4 +16,6 @@ export interface ValidationIssue {
   targetId?: string;
   /** Rule category — used for grouping in the Quality dashboard. */
   category?: ValidationCategory;
+  /** Index into the top-level docContent[] array for document-level issues without a targetId. */
+  documentIndex?: number;
 }

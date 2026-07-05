@@ -46,7 +46,6 @@ import { deriveOutline, flattenOutline } from "@/editor/utils/deriveOutline";
 import { collectReviewExportRows, generateReviewCsv, downloadReviewCsv } from "@/services/reviewExportService";
 import { useDocumentValidation } from "@/editor/utils/useDocumentValidation";
 import { useValidationStore } from "@/stores/validationStore";
-import { derivePattern, buildDetectionRegex } from "@/editor/utils/requirementOps";
 
 // Module-level stable extensions prevent Tiptap compareOptions from
 // calling setOptions() synchronously during React's render phase.
@@ -77,6 +76,8 @@ export default function App() {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const sidebarWidth = useUIStore((s) => s.sidebarWidth);
   const adjustSidebar = useUIStore((s) => s.adjustSidebar);
+  const rightPanelWidth = useUIStore((s) => s.rightPanelWidth);
+  const adjustRightPanel = useUIStore((s) => s.adjustRightPanel);
   const sourceMode = useUIStore((s) => s.sourceMode);
   const toggleSourceMode = useUIStore((s) => s.toggleSourceMode);
 
@@ -1120,6 +1121,15 @@ export default function App() {
                   onClose={() => setFindOpen(false)}
                 />
               </div>
+              {inlineDrawerRecord && (
+                <>
+                  <ResizeHandle onDelta={(d) => adjustRightPanel(-d)} />
+                  {/* h-full fills height via align-self:stretch in the flex row */}
+                  <div className="shrink-0 overflow-hidden" style={{ width: rightPanelWidth }}>
+                    <CommentDrawer record={inlineDrawerRecord} onClose={closeInlineDrawer} />
+                  </div>
+                </>
+              )}
             </>
           ) : (
             <Dashboard
@@ -1133,13 +1143,6 @@ export default function App() {
 
         <StatusBar onSaveReview={handleSaveReview} onSaveReviewAs={handleSaveReviewAs} />
       </div>
-
-      {/* Inline comment drawer — opened by clicking badges on requirement headings */}
-      {inlineDrawerRecord && (
-        <div className="fixed right-0 top-0 z-[55] flex h-full w-80 flex-col border-l border-[var(--color-border)] bg-[var(--color-paper)] shadow-2xl">
-          <CommentDrawer record={inlineDrawerRecord} onClose={closeInlineDrawer} />
-        </div>
-      )}
 
       {/* User name modal — opened via File → User Name… */}
       {userNameModalOpen && (

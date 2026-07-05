@@ -5,20 +5,13 @@ import type { JSONContent } from "@tiptap/core";
 import { deriveOutline, flattenOutline } from "./deriveOutline";
 import { derivePattern, buildDetectionRegex, extractStatusText } from "./requirementOps";
 import { getNodeSectionRange } from "./outlineOps";
+import { extractBodyText } from "./extractBodyText";
 import { useStatusConfigStore } from "@/stores/statusConfigStore";
 import type { RequirementRef } from "@/services/documentValidationService";
 import type { ValidationIssue } from "@/types/validation";
 import { runAllValidations } from "@/validation/engine";
 
 const DEBOUNCE_MS = 500;
-
-// Recursively extracts plain text from a JSONContent node tree.
-// Used for body-content checks only; does not need hardBreak semantics.
-function extractNodeText(node: JSONContent): string {
-  if (typeof node.text === "string") return node.text;
-  if (!Array.isArray(node.content)) return "";
-  return node.content.map(extractNodeText).join("");
-}
 
 /**
  * Derives document-quality validation issues from the live editor, debounced.
@@ -73,7 +66,7 @@ export function useDocumentValidation(
         const [, to] = getNodeSectionRange(docContent, node.index, node.level ?? 1);
         const bodyText = docContent
           .slice(node.index + 1, to)
-          .map(extractNodeText)
+          .map(extractBodyText)
           .join("")
           .trim();
 
@@ -85,7 +78,7 @@ export function useDocumentValidation(
         });
       }
 
-      setIssues(runAllValidations(requirements, validAliases));
+      setIssues(runAllValidations(requirements, validAliases, docContent));
     }, DEBOUNCE_MS);
 
     return () => {

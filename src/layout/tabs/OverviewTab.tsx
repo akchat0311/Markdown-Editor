@@ -8,7 +8,6 @@ import { useCommentDetails } from "@/editor/utils/useCommentDetails";
 import { useRequirementIndex } from "@/editor/utils/useRequirementIndex";
 import { deriveOutline, flattenOutline } from "@/editor/utils/deriveOutline";
 import { badgeClass } from "@/layout/shared/StatusBadge";
-import type { RequirementStatus } from "@/types/requirementStatus";
 
 // ── SVG icons ─────────────────────────────────────────────────────────────────
 

@@ -192,7 +192,7 @@ export const SLASH_COMMAND_ITEMS: SlashCommandItem[] = [
         .chain()
         .focus()
         .deleteRange(range)
-        .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
+        .insertTable({ rows: 3, cols: 4, withHeaderRow: true })
         .run(),
   },
   {

@@ -177,6 +177,39 @@ describe("Dashboard — Quality tab", () => {
     fireEvent.click(screen.getAllByTestId("rule-toggle")[0]);
     expect(screen.getAllByTestId("req-row")).toHaveLength(3);
   });
+
+  it("3 distinct document-level issues each render as a separate non-clickable row", () => {
+    useValidationStore.setState({
+      issues: [
+        makeIssue({ id: "ua-1", type: "undefined-acronym", targetId: undefined, documentIndex: 0, severity: "warning", message: "'ECU' appears to be an undefined acronym." }),
+        makeIssue({ id: "ua-2", type: "undefined-acronym", targetId: undefined, documentIndex: 1, severity: "warning", message: "'CAN' appears to be an undefined acronym." }),
+        makeIssue({ id: "ua-3", type: "undefined-acronym", targetId: undefined, documentIndex: 2, severity: "warning", message: "'ABS' appears to be an undefined acronym." }),
+      ],
+    });
+    goToInsights();
+    fireEvent.click(screen.getAllByTestId("rule-toggle")[0]);
+    const rows = screen.getAllByTestId("req-row");
+    expect(rows).toHaveLength(3);
+    // All document rows are non-navigable divs, not buttons
+    rows.forEach((row) => expect(row.tagName).toBe("DIV"));
+  });
+
+  it("mixed requirement and document issues render separate rows of each type", () => {
+    useValidationStore.setState({
+      issues: [
+        makeIssue({ id: "ua-req", type: "undefined-acronym", targetId: "REQ_001", documentIndex: 1, severity: "warning", message: "REQ_001: 'ECU' appears to be an undefined acronym." }),
+        makeIssue({ id: "ua-doc", type: "undefined-acronym", targetId: undefined, documentIndex: 0, severity: "warning", message: "'CAN' appears to be an undefined acronym." }),
+      ],
+    });
+    goToInsights();
+    fireEvent.click(screen.getAllByTestId("rule-toggle")[0]);
+    const rows = screen.getAllByTestId("req-row");
+    expect(rows).toHaveLength(2);
+    const buttonRows = rows.filter((r) => r.tagName === "BUTTON");
+    const divRows = rows.filter((r) => r.tagName === "DIV");
+    expect(buttonRows).toHaveLength(1); // requirement row is navigable (button)
+    expect(divRows).toHaveLength(1);    // document row is non-navigable (div)
+  });
 });
 
 // ── Reviews tab ───────────────────────────────────────────────────────────────

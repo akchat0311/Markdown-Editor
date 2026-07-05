@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import type { JSONContent } from "@tiptap/core";
 import { weakModalRule } from "@/validation/rules/weakModal";
 import { ambiguousWordsRule } from "@/validation/rules/ambiguousWords";
 import { forbiddenTermsRule } from "@/validation/rules/forbiddenTerms";
@@ -210,6 +211,91 @@ describe("weakModalRule", () => {
       termCfg(["should", "may"]),
     );
     expect(new Set(issues.map((i) => i.id)).size).toBe(2);
+  });
+});
+
+// ── weakModalRule — CAN / May false-positive regression ───────────────────────
+
+describe("weakModalRule — CAN/May false positive regression", () => {
+  it("CAN all-uppercase does not trigger weakModal (automotive acronym)", () => {
+    expect(
+      weakModalRule.check(req("REQ_001", "The ECU shall transmit CAN messages."), termCfg(["can"])),
+    ).toHaveLength(0);
+  });
+
+  it("CAN bus phrasing does not trigger weakModal", () => {
+    expect(
+      weakModalRule.check(req("REQ_001", "The CAN bus shall operate at 500 kbps."), termCfg(["can"])),
+    ).toHaveLength(0);
+  });
+
+  it("lowercase 'can' capability wording triggers weakModal", () => {
+    const issues = weakModalRule.check(
+      req("REQ_001", "The module can send diagnostic frames."),
+      termCfg(["can"]),
+    );
+    expect(issues).toHaveLength(1);
+    expect(issues[0].type).toBe("weak-modal");
+  });
+
+  it("title-case 'Can' modal (sentence-start) triggers weakModal", () => {
+    const issues = weakModalRule.check(
+      req("REQ_001", "Can the system detect faults?"),
+      termCfg(["can"]),
+    );
+    expect(issues).toHaveLength(1);
+  });
+
+  it("'May YYYY' month reference does not trigger weakModal", () => {
+    expect(
+      weakModalRule.check(
+        req("REQ_001", "This requirement is valid from May 2026."),
+        termCfg(["may"]),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("'May DD' date reference does not trigger weakModal", () => {
+    expect(
+      weakModalRule.check(req("REQ_001", "Deadline is May 15."), termCfg(["may"])),
+    ).toHaveLength(0);
+  });
+
+  it("lowercase 'may' modal triggers weakModal", () => {
+    const issues = weakModalRule.check(
+      req("REQ_001", "The system may respond within 10ms."),
+      termCfg(["may"]),
+    );
+    expect(issues).toHaveLength(1);
+    expect(issues[0].type).toBe("weak-modal");
+  });
+
+  it("title-case 'May' not followed by digit triggers weakModal (modal usage)", () => {
+    const issues = weakModalRule.check(
+      req("REQ_001", "May the system respond to errors?"),
+      termCfg(["may"]),
+    );
+    expect(issues).toHaveLength(1);
+  });
+
+  it("SHOULD all-uppercase still triggers weakModal (case-insensitive behaviour preserved)", () => {
+    expect(
+      weakModalRule.check(req("REQ_001", "This SHOULD be verified."), termCfg(["should"])),
+    ).toHaveLength(1);
+  });
+
+  it("should/could/might/would/ought to are unaffected", () => {
+    const pairs: [string, string][] = [
+      ["should", "The system should handle errors."],
+      ["could", "The module could retry once."],
+      ["might", "The component might reboot."],
+      ["would", "The device would alert the user."],
+      ["ought to", "The software ought to validate inputs."],
+    ];
+    for (const [term, body] of pairs) {
+      const issues = weakModalRule.check(req("REQ_001", body), termCfg([term]));
+      expect(issues, `term "${term}" should trigger`).toHaveLength(1);
+    }
   });
 });
 
@@ -740,7 +826,7 @@ describe("runAllValidations — integration", () => {
 // ── undefinedAcronymsRule ─────────────────────────────────────────────────────
 
 describe("undefinedAcronymsRule", () => {
-  function cfg(ignored = ["REQ", "ID"], enabled = true): AcronymRuleConfig {
+  function cfg(ignored = ["TBD", "TBC", "TODO", "REQ", "ID"], enabled = true): AcronymRuleConfig {
     return {
       id: "undefinedAcronyms",
       category: "consistency",
@@ -749,7 +835,7 @@ describe("undefinedAcronymsRule", () => {
       title: "Undefined Acronyms",
       description: "Acronyms should be defined before first use.",
       ignored,
-      message: "{id}: Acronym '{term}' is used before being defined.",
+      message: "{id}: '{term}' appears to be an undefined acronym. Define it as: Full Name ({term}).",
     };
   }
 
@@ -902,5 +988,853 @@ describe("undefinedAcronymsRule", () => {
     const issues = undefinedAcronymsRule.check(reqs, config);
     expect(issues.some((i) => i.message.includes("ECU"))).toBe(true);
     expect(issues.some((i) => i.message.includes("CAN"))).toBe(true);
+  });
+
+  // ── diagnostic wording ────────────────────────────────────────────────────
+
+  it("diagnostic message preserves {id}: prefix and uses hedged wording", () => {
+    const issues = undefinedAcronymsRule.check(
+      [req("REQ_001", "The ECU shall respond.")],
+      cfg(),
+    );
+    expect(issues).toHaveLength(1);
+    expect(issues[0].message).toMatch(/^REQ_001:/);
+    expect(issues[0].message).toContain("appears to be an undefined acronym");
+    expect(issues[0].message).toContain("Define it as: Full Name");
+    expect(issues[0].message).toContain("ECU");
+  });
+});
+
+// ── undefinedAcronymsRule — false-positive regression (BUILTIN_EXCLUDED) ─────
+
+describe("undefinedAcronymsRule — false-positive regression", () => {
+  function cfg(ignored = ["TBD", "TBC", "TODO", "REQ", "ID"], enabled = true): AcronymRuleConfig {
+    return {
+      id: "undefinedAcronyms",
+      category: "consistency",
+      enabled,
+      severity: "warning",
+      title: "Undefined Acronyms",
+      description: "Acronyms should be defined before first use.",
+      ignored,
+      message: "{id}: '{term}' appears to be an undefined acronym. Define it as: Full Name ({term}).",
+    };
+  }
+
+  const BUILTIN_EXCLUDED_TOKENS = [
+    // Requirement-language keywords
+    "SHALL", "SHOULD", "MAY", "MUST", "WILL",
+    // Logical/grammatical connectives
+    "NOT", "AND", "OR", "IF", "NOR",
+    // Requirement quantifiers
+    "ALL", "ANY", "NONE", "EACH", "EVERY", "SOME",
+    // Universal boolean and activation-state literals
+    "TRUE", "FALSE", "ENABLED", "DISABLED", "ACTIVE", "INACTIVE", "ON", "OFF",
+  ];
+
+  it.each(BUILTIN_EXCLUDED_TOKENS)(
+    "built-in exclusion '%s' is never flagged as an undefined acronym",
+    (token) => {
+      const issues = undefinedAcronymsRule.check(
+        [req("REQ_001", `The ${token} condition shall be verified.`)],
+        cfg(),
+      );
+      expect(issues.filter((i) => i.message.includes(token))).toHaveLength(0);
+    },
+  );
+
+  it("composite: ALL, ENABLED, ANY, ACTIVE, DISABLED, NOT, TRUE produce zero issues", () => {
+    const issues = undefinedAcronymsRule.check(
+      [req(
+        "REQ_001",
+        "ALL outputs SHALL be ENABLED when ANY input is ACTIVE or DISABLED. The system SHALL NOT respond if TRUE is returned.",
+      )],
+      cfg(),
+    );
+    expect(issues).toHaveLength(0);
+  });
+});
+
+// ── undefinedAcronymsRule — automotive acronym regression ─────────────────────
+
+describe("undefinedAcronymsRule — automotive acronym regression", () => {
+  function cfg(ignored = ["TBD", "TBC", "TODO", "REQ", "ID"], enabled = true): AcronymRuleConfig {
+    return {
+      id: "undefinedAcronyms",
+      category: "consistency",
+      enabled,
+      severity: "warning",
+      title: "Undefined Acronyms",
+      description: "Acronyms should be defined before first use.",
+      ignored,
+      message: "{id}: '{term}' appears to be an undefined acronym. Define it as: Full Name ({term}).",
+    };
+  }
+
+  it.each(["ECU", "ABS", "ADAS", "UDS", "HVAC", "CAN", "HV", "LV", "SOC", "EOL"])(
+    "undefined domain acronym '%s' is flagged when not defined",
+    (token) => {
+      const issues = undefinedAcronymsRule.check(
+        [req("REQ_001", `The ${token} shall respond.`)],
+        cfg(),
+      );
+      expect(issues.some((i) => i.message.includes(token))).toBe(true);
+    },
+  );
+
+  it("mixed sentence: ECU, CAN, ABS flagged; ACTIVE not flagged; exactly 3 issues", () => {
+    const issues = undefinedAcronymsRule.check(
+      [req("REQ_001", "The ECU SHALL transmit the CAN message when ABS is ACTIVE.")],
+      cfg(),
+    );
+    expect(issues.some((i) => i.message.includes("ECU"))).toBe(true);
+    expect(issues.some((i) => i.message.includes("CAN"))).toBe(true);
+    expect(issues.some((i) => i.message.includes("ABS"))).toBe(true);
+    expect(issues.filter((i) => i.message.includes("ACTIVE"))).toHaveLength(0);
+    expect(issues.filter((i) => i.type === "undefined-acronym")).toHaveLength(3);
+  });
+});
+
+// ── undefinedAcronymsRule — definition detection ──────────────────────────────
+
+describe("undefinedAcronymsRule — definition detection", () => {
+  function cfg(ignored = ["TBD", "TBC", "TODO", "REQ", "ID"], enabled = true): AcronymRuleConfig {
+    return {
+      id: "undefinedAcronyms",
+      category: "consistency",
+      enabled,
+      severity: "warning",
+      title: "Undefined Acronyms",
+      description: "Acronyms should be defined before first use.",
+      ignored,
+      message: "{id}: '{term}' appears to be an undefined acronym. Define it as: Full Name ({term}).",
+    };
+  }
+
+  it.each([
+    ["Electronic Control Unit (ECU)", "ECU"],
+    ["Controller Area Network (CAN)", "CAN"],
+    ["Advanced Driver Assistance System (ADAS)", "ADAS"],
+    ["Unified Diagnostic Services (UDS)", "UDS"],
+    ["Anti-lock Braking System (ABS)", "ABS"],
+    ["High Voltage (HV)", "HV"],
+    ["Low Voltage (LV)", "LV"],
+    ["State of Charge (SOC)", "SOC"],
+    ["End of Line (EOL)", "EOL"],
+    ["End-of-Line (EOL)", "EOL"],
+    ["End-of-Life (EOL)", "EOL"],
+  ] as [string, string][])(
+    "definition '%s' resolves %s and suppresses later uses",
+    (definitionPhrase, acronym) => {
+      const reqs = [
+        req("REQ_001", `${definitionPhrase} shall be performed.`),
+        req("REQ_002", `The ${acronym} process shall be validated.`),
+      ];
+      expect(undefinedAcronymsRule.check(reqs, cfg())).toHaveLength(0);
+    },
+  );
+
+  it("multiple definitions in one requirement: ECU, CAN, ABS all resolved", () => {
+    const reqs = [
+      req(
+        "REQ_001",
+        "Electronic Control Unit (ECU), Controller Area Network (CAN), and Anti-lock Braking System (ABS) interfaces SHALL be supported.",
+      ),
+      req("REQ_002", "The ECU SHALL transmit the CAN message when ABS is ACTIVE."),
+    ];
+    expect(undefinedAcronymsRule.check(reqs, cfg())).toHaveLength(0);
+  });
+
+  it("guard: 'the (ECU)' is NOT a valid definition — only 1 word unit before acronym", () => {
+    const reqs = [
+      req("REQ_001", "the (ECU) bus shall respond."),
+      req("REQ_002", "The ECU shall operate."),
+    ];
+    const issues = undefinedAcronymsRule.check(reqs, cfg());
+    expect(issues.some((i) => i.message.includes("ECU"))).toBe(true);
+  });
+
+  it("guard: 'a (ABS)' is NOT a valid definition — only 1 word unit before acronym", () => {
+    const reqs = [
+      req("REQ_001", "a (ABS) system shall be fitted."),
+      req("REQ_002", "The ABS shall activate."),
+    ];
+    const issues = undefinedAcronymsRule.check(reqs, cfg());
+    expect(issues.some((i) => i.message.includes("ABS"))).toBe(true);
+  });
+
+  it("boundary: End-of-Line (EOL) within a longer sentence defines EOL", () => {
+    const reqs = [
+      req("REQ_001", "The system uses End-of-Line (EOL) as the calibration standard."),
+      req("REQ_002", "The EOL test shall pass."),
+    ];
+    expect(undefinedAcronymsRule.check(reqs, cfg())).toHaveLength(0);
+  });
+
+  it("boundary behavior: 'The state is HIGH (HV)' satisfies the ≥2-word guard (greedy match)", () => {
+    // "The state is HIGH" = 4 word units; the ≥2-unit guard is satisfied.
+    // This is the same greedy behavior as the previous definition regex.
+    const reqs = [
+      req("REQ_001", "The state is HIGH (HV)."),
+      req("REQ_002", "The HV system shall respond."),
+    ];
+    expect(undefinedAcronymsRule.check(reqs, cfg())).toHaveLength(0);
+  });
+
+  it("boundary behavior: 'The result SHALL be PASS (PAS)' satisfies the ≥2-word guard", () => {
+    const reqs = [
+      req("REQ_001", "The result SHALL be PASS (PAS)."),
+      req("REQ_002", "The PAS value shall be logged."),
+    ];
+    expect(undefinedAcronymsRule.check(reqs, cfg())).toHaveLength(0);
+  });
+});
+
+// ── undefinedAcronymsRule — definition ordering ───────────────────────────────
+
+describe("undefinedAcronymsRule — definition ordering", () => {
+  function cfg(ignored = ["TBD", "TBC", "TODO", "REQ", "ID"], enabled = true): AcronymRuleConfig {
+    return {
+      id: "undefinedAcronyms",
+      category: "consistency",
+      enabled,
+      severity: "warning",
+      title: "Undefined Acronyms",
+      description: "Acronyms should be defined before first use.",
+      ignored,
+      message: "{id}: '{term}' appears to be an undefined acronym. Define it as: Full Name ({term}).",
+    };
+  }
+
+  it("definition before use: no issue", () => {
+    const reqs = [
+      req("REQ_001", "Electronic Control Unit (ECU) SHALL be validated."),
+      req("REQ_002", "The ECU SHALL respond."),
+    ];
+    expect(undefinedAcronymsRule.check(reqs, cfg())).toHaveLength(0);
+  });
+
+  it("use before definition: issue on first requirement", () => {
+    const reqs = [
+      req("REQ_001", "The ECU SHALL transmit."),
+      req("REQ_002", "Electronic Control Unit (ECU) SHALL be validated."),
+    ];
+    const issues = undefinedAcronymsRule.check(reqs, cfg());
+    expect(issues).toHaveLength(1);
+    expect(issues[0].targetId).toBe("REQ_001");
+    expect(issues[0].message).toContain("ECU");
+  });
+
+  it("definition in previous requirement: all later uses are valid", () => {
+    const reqs = [
+      req("REQ_001", "Controller Area Network (CAN) is used."),
+      req("REQ_002", "CAN messages SHALL be logged."),
+      req("REQ_003", "CAN bus SHALL NOT exceed 500 kbps."),
+    ];
+    expect(undefinedAcronymsRule.check(reqs, cfg())).toHaveLength(0);
+  });
+
+  it("definition and use in the same requirement: no issue", () => {
+    const reqs = [
+      req("REQ_001", "Anti-lock Braking System (ABS) SHALL activate within 50ms of the ABS trigger."),
+    ];
+    expect(undefinedAcronymsRule.check(reqs, cfg())).toHaveLength(0);
+  });
+});
+
+// ── undefinedAcronymsRule — configured ignored terms ─────────────────────────
+
+describe("undefinedAcronymsRule — configured ignored terms", () => {
+  function cfg(ignored = ["TBD", "TBC", "TODO", "REQ", "ID"], enabled = true): AcronymRuleConfig {
+    return {
+      id: "undefinedAcronyms",
+      category: "consistency",
+      enabled,
+      severity: "warning",
+      title: "Undefined Acronyms",
+      description: "Acronyms should be defined before first use.",
+      ignored,
+      message: "{id}: '{term}' appears to be an undefined acronym. Define it as: Full Name ({term}).",
+    };
+  }
+
+  it.each(["TBD", "TBC", "TODO", "REQ", "ID"])(
+    "default configured-ignore token '%s' is not flagged",
+    (token) => {
+      const issues = undefinedAcronymsRule.check(
+        [req("REQ_001", `The ${token} value shall be verified.`)],
+        cfg(),
+      );
+      expect(issues.filter((i) => i.message.includes(token))).toHaveLength(0);
+    },
+  );
+
+  it("RPM is not flagged when in cfg.ignored", () => {
+    const issues = undefinedAcronymsRule.check(
+      [req("REQ_001", "The RPM SHALL not exceed 6000.")],
+      cfg(["RPM", "TBD", "TBC", "TODO", "REQ", "ID"]),
+    );
+    expect(issues.filter((i) => i.message.includes("RPM"))).toHaveLength(0);
+  });
+
+  it("custom project term VBATT is not flagged when in cfg.ignored", () => {
+    const issues = undefinedAcronymsRule.check(
+      [req("REQ_001", "The VBATT SHALL be above 9 V.")],
+      cfg(["VBATT", "TBD", "TBC", "TODO", "REQ", "ID"]),
+    );
+    expect(issues.filter((i) => i.message.includes("VBATT"))).toHaveLength(0);
+  });
+
+  it("CAN is not flagged when explicitly in cfg.ignored", () => {
+    const issues = undefinedAcronymsRule.check(
+      [req("REQ_001", "The CAN bus SHALL transmit messages.")],
+      cfg(["CAN", "TBD", "TBC", "TODO", "REQ", "ID"]),
+    );
+    expect(issues.filter((i) => i.message.includes("CAN"))).toHaveLength(0);
+  });
+
+  it("CAN is flagged when not in cfg.ignored and not defined", () => {
+    const issues = undefinedAcronymsRule.check(
+      [req("REQ_001", "The CAN bus SHALL transmit messages.")],
+      cfg(),
+    );
+    expect(issues.some((i) => i.message.includes("CAN"))).toBe(true);
+  });
+});
+
+// ── undefinedAcronymsRule — conservative policy (ambiguous engineering terms) ─
+
+describe("undefinedAcronymsRule — conservative policy", () => {
+  function cfg(ignored = ["TBD", "TBC", "TODO", "REQ", "ID"], enabled = true): AcronymRuleConfig {
+    return {
+      id: "undefinedAcronyms",
+      category: "consistency",
+      enabled,
+      severity: "warning",
+      title: "Undefined Acronyms",
+      description: "Acronyms should be defined before first use.",
+      ignored,
+      message: "{id}: '{term}' appears to be an undefined acronym. Define it as: Full Name ({term}).",
+    };
+  }
+
+  it.each(["HIGH", "FAULT", "VALID", "INIT", "SAFE"])(
+    "ambiguous engineering term '%s' remains a lexical candidate and is flagged when undefined",
+    (token) => {
+      const issues = undefinedAcronymsRule.check(
+        [req("REQ_001", `The ${token} condition shall be checked.`)],
+        cfg(),
+      );
+      expect(issues.some((i) => i.message.includes(token))).toBe(true);
+    },
+  );
+});
+
+// ── undefinedAcronymsRule — document-wide scan (docContent path) ──────────────
+
+// Shared helpers for document-wide tests
+function docCfg(ignored = ["TBD", "TBC", "TODO", "REQ", "ID"]): AcronymRuleConfig {
+  return {
+    id: "undefinedAcronyms",
+    category: "consistency",
+    enabled: true,
+    severity: "warning",
+    title: "Undefined Acronyms",
+    description: "",
+    ignored,
+    message: "{id}: '{term}' appears to be an undefined acronym. Define it as: Full Name ({term}).",
+  };
+}
+
+function heading(level: number, text: string): JSONContent {
+  return { type: "heading", attrs: { level }, content: [{ type: "text", text }] };
+}
+function para(text: string): JSONContent {
+  return { type: "paragraph", content: [{ type: "text", text }] };
+}
+function codeBlockNode(text: string): JSONContent {
+  return { type: "codeBlock", content: [{ type: "text", text }] };
+}
+function acronymTable(col0: string, col1: string, rows: [string, string][]): JSONContent {
+  return {
+    type: "table",
+    content: [
+      {
+        type: "tableRow",
+        content: [
+          { type: "tableHeader", content: [{ type: "paragraph", content: [{ type: "text", text: col0 }] }] },
+          { type: "tableHeader", content: [{ type: "paragraph", content: [{ type: "text", text: col1 }] }] },
+        ],
+      },
+      ...rows.map(([acro, def]) => ({
+        type: "tableRow",
+        content: [
+          { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: acro }] }] },
+          { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: def }] }] },
+        ],
+      })),
+    ],
+  };
+}
+
+// ── Fallback behavior (docContent absent or empty) ────────────────────────────
+
+describe("undefinedAcronymsRule — fallback when docContent absent", () => {
+  it("absent docContent uses RequirementRef[] path: issue has targetId", () => {
+    const issues = undefinedAcronymsRule.check(
+      [req("REQ_001", "The ECU shall respond.")],
+      docCfg(),
+      // no third argument
+    );
+    expect(issues).toHaveLength(1);
+    expect(issues[0].targetId).toBe("REQ_001");
+  });
+
+  it("empty docContent array falls back to RequirementRef[] path: issue has targetId", () => {
+    const issues = undefinedAcronymsRule.check(
+      [req("REQ_001", "The ECU shall respond.")],
+      docCfg(),
+      [],
+    );
+    expect(issues).toHaveLength(1);
+    expect(issues[0].targetId).toBe("REQ_001");
+  });
+
+  it("fallback preserves cross-requirement definition ordering", () => {
+    const reqs = [
+      req("REQ_001", "The ECU shall respond."),
+      req("REQ_002", "Electronic Control Unit (ECU) is defined here."),
+    ];
+    const issues = undefinedAcronymsRule.check(reqs, docCfg(), undefined);
+    expect(issues.some((i) => i.message.includes("ECU"))).toBe(true);
+    expect(issues.every((i) => i.targetId !== undefined)).toBe(true);
+  });
+});
+
+// ── Acronym table detection ───────────────────────────────────────────────────
+
+describe("undefinedAcronymsRule — docContent: acronym table detection", () => {
+  it("table with 'Acronym'/'Definition' header defines terms: ECU not flagged in following paragraph", () => {
+    const docContent: JSONContent[] = [
+      acronymTable("Acronym", "Definition", [["ECU", "Electronic Control Unit"]]),
+      para("The ECU shall respond."),
+    ];
+    const issues = undefinedAcronymsRule.check([], docCfg(), docContent);
+    expect(issues.filter((i) => i.message.includes("ECU"))).toHaveLength(0);
+  });
+
+  it("table with 'Term'/'Meaning' header is recognized as acronym table", () => {
+    const docContent: JSONContent[] = [
+      acronymTable("Term", "Meaning", [["CAN", "Controller Area Network"]]),
+      para("The CAN bus shall transmit messages."),
+    ];
+    const issues = undefinedAcronymsRule.check([], docCfg(), docContent);
+    expect(issues.filter((i) => i.message.includes("CAN"))).toHaveLength(0);
+  });
+
+  it("table with 'Abbreviations'/'Description' header is recognized", () => {
+    const docContent: JSONContent[] = [
+      acronymTable("Abbreviations", "Description", [["ABS", "Anti-lock Braking System"]]),
+      para("The ABS shall activate within 50ms."),
+    ];
+    const issues = undefinedAcronymsRule.check([], docCfg(), docContent);
+    expect(issues.filter((i) => i.message.includes("ABS"))).toHaveLength(0);
+  });
+
+  it("table with 'Abbr'/'Full Name' header is recognized", () => {
+    const docContent: JSONContent[] = [
+      acronymTable("Abbr", "Full Name", [["HVAC", "Heating Ventilation Air Conditioning"]]),
+      para("The HVAC unit shall maintain temperature."),
+    ];
+    const issues = undefinedAcronymsRule.check([], docCfg(), docContent);
+    expect(issues.filter((i) => i.message.includes("HVAC"))).toHaveLength(0);
+  });
+
+  it("table with 'acronyms'/'expansion' (lowercase) header is recognized", () => {
+    const docContent: JSONContent[] = [
+      acronymTable("acronyms", "expansion", [["OBD", "On-Board Diagnostics"]]),
+      para("The OBD port shall be accessible."),
+    ];
+    const issues = undefinedAcronymsRule.check([], docCfg(), docContent);
+    expect(issues.filter((i) => i.message.includes("OBD"))).toHaveLength(0);
+  });
+
+  it("table with unrecognized header ('Name'/'Value') is NOT treated as acronym table: acronym still flagged", () => {
+    const docContent: JSONContent[] = [
+      acronymTable("Name", "Value", [["ECU", "Electronic Control Unit"]]),
+      para("The ECU shall respond."),
+    ];
+    const issues = undefinedAcronymsRule.check([], docCfg(), docContent);
+    // ECU appears in table body text and in the paragraph → both are scanned
+    expect(issues.some((i) => i.message.includes("ECU"))).toBe(true);
+  });
+
+  it("acronym table row with empty definition cell is skipped: acronym not added to defined set", () => {
+    const docContent: JSONContent[] = [
+      acronymTable("Acronym", "Definition", [["ECU", ""]]),
+      para("The ECU shall respond."),
+    ];
+    const issues = undefinedAcronymsRule.check([], docCfg(), docContent);
+    expect(issues.some((i) => i.message.includes("ECU"))).toBe(true);
+  });
+
+  it("acronym table row with lowercase/non-acronym value in col 0 is skipped", () => {
+    const docContent: JSONContent[] = [
+      acronymTable("Acronym", "Definition", [["word", "some definition"]]),
+      para("The WORD state shall be active."),
+    ];
+    // 'word' is not a valid acronym token (not uppercase), 'WORD' is flagged
+    const issues = undefinedAcronymsRule.check([], docCfg(), docContent);
+    expect(issues.some((i) => i.message.includes("WORD"))).toBe(true);
+  });
+});
+
+// ── Document-wide scan: heading context ──────────────────────────────────────
+
+describe("undefinedAcronymsRule — docContent: heading context", () => {
+  it("heading matching a req ID sets context: subsequent block issue has that targetId", () => {
+    const reqs = [req("REQ_001", "The ECU shall respond.")];
+    const docContent: JSONContent[] = [
+      heading(1, "REQ_001 [Draft] Motor Control"),
+      para("The ECU shall respond."),
+    ];
+    const issues = undefinedAcronymsRule.check(reqs, docCfg(), docContent);
+    expect(issues.some((i) => i.targetId === "REQ_001" && i.message.includes("ECU"))).toBe(true);
+  });
+
+  it("heading not matching any req ID resets context to null: issue has no targetId", () => {
+    const reqs = [req("REQ_001", "")];
+    const docContent: JSONContent[] = [
+      heading(1, "Introduction"),
+      para("The ECU shall respond."),
+    ];
+    const issues = undefinedAcronymsRule.check(reqs, docCfg(), docContent);
+    const ecuIssue = issues.find((i) => i.message.includes("ECU"));
+    expect(ecuIssue).toBeDefined();
+    expect(ecuIssue?.targetId).toBeUndefined();
+  });
+
+  it("blocks before any heading have null context: issue has no targetId", () => {
+    const reqs = [req("REQ_001", "")];
+    const docContent: JSONContent[] = [
+      para("The ECU shall respond."),
+      heading(1, "REQ_001"),
+      para("Normal body text."),
+    ];
+    const issues = undefinedAcronymsRule.check(reqs, docCfg(), docContent);
+    const ecuIssue = issues.find((i) => i.message.includes("ECU"));
+    expect(ecuIssue?.targetId).toBeUndefined();
+  });
+
+  it("non-requirement heading followed by req heading: context switches correctly", () => {
+    const reqs = [req("REQ_001", "")];
+    const docContent: JSONContent[] = [
+      heading(1, "Introduction"),
+      para("Introductory text with ECU."),
+      heading(2, "REQ_001 [Draft] Power Control"),
+      para("The ECU output shall be stable."),
+    ];
+    const issues = undefinedAcronymsRule.check(reqs, docCfg(), docContent);
+    const introIssue = issues.find((i) => i.message.includes("ECU") && i.targetId === undefined);
+    const reqIssue = issues.find((i) => i.message.includes("ECU") && i.targetId === "REQ_001");
+    expect(introIssue).toBeDefined();
+    expect(reqIssue).toBeDefined();
+  });
+
+  it("req heading with numeric suffix boundary: REQ_001 does not match REQ_0010 heading", () => {
+    const reqs = [req("REQ_001", ""), req("REQ_0010", "")];
+    const docContent: JSONContent[] = [
+      heading(1, "REQ_0010 High Voltage"),
+      para("The HV system shall operate."),
+    ];
+    const issues = undefinedAcronymsRule.check(reqs, docCfg(), docContent);
+    const hvIssue = issues.find((i) => i.message.includes("HV"));
+    // REQ_0010 heading should match REQ_0010, not REQ_001
+    expect(hvIssue?.targetId).toBe("REQ_0010");
+  });
+});
+
+// ── Document-wide scan: scoping and ordering ──────────────────────────────────
+
+describe("undefinedAcronymsRule — docContent: scoping and ordering", () => {
+  it("definition in early block clears use in later block: no issue", () => {
+    const docContent: JSONContent[] = [
+      para("Electronic Control Unit (ECU) is defined in this preamble."),
+      heading(1, "REQ_001"),
+      para("The ECU shall respond within 10ms."),
+    ];
+    const issues = undefinedAcronymsRule.check(
+      [req("REQ_001", "")],
+      docCfg(),
+      docContent,
+    );
+    expect(issues.filter((i) => i.message.includes("ECU"))).toHaveLength(0);
+  });
+
+  it("use before definition (doc order) is flagged", () => {
+    const docContent: JSONContent[] = [
+      heading(1, "REQ_001"),
+      para("The ECU shall respond."),
+      para("Electronic Control Unit (ECU) is defined here."),
+    ];
+    const issues = undefinedAcronymsRule.check(
+      [req("REQ_001", "")],
+      docCfg(),
+      docContent,
+    );
+    expect(issues.some((i) => i.message.includes("ECU"))).toBe(true);
+  });
+
+  it("acronym table before use: ECU not flagged in any subsequent block", () => {
+    const docContent: JSONContent[] = [
+      acronymTable("Acronym", "Definition", [["ECU", "Electronic Control Unit"], ["CAN", "Controller Area Network"]]),
+      heading(1, "REQ_001"),
+      para("The ECU shall transmit CAN messages."),
+    ];
+    const issues = undefinedAcronymsRule.check(
+      [req("REQ_001", "")],
+      docCfg(),
+      docContent,
+    );
+    expect(issues.filter((i) => i.message.includes("ECU") || i.message.includes("CAN"))).toHaveLength(0);
+  });
+
+  it("code block: acronyms inside codeBlock are not flagged", () => {
+    const docContent: JSONContent[] = [
+      heading(1, "REQ_001"),
+      codeBlockNode("ECU_STATE = ACTIVE; CAN_ID = 0x1A0;"),
+    ];
+    const issues = undefinedAcronymsRule.check(
+      [req("REQ_001", "")],
+      docCfg(),
+      docContent,
+    );
+    // codeBlock content returns " " from extractBodyText — no acronyms found
+    expect(issues.filter((i) => i.message.includes("ECU") || i.message.includes("CAN"))).toHaveLength(0);
+  });
+});
+
+// ── Document-wide scan: issue shape ──────────────────────────────────────────
+
+describe("undefinedAcronymsRule — docContent: issue shape", () => {
+  it("document-level issue: targetId is undefined (no fake doc:N value)", () => {
+    const docContent: JSONContent[] = [para("The ECU output is undefined.")];
+    const issues = undefinedAcronymsRule.check([], docCfg(), docContent);
+    const ecuIssue = issues.find((i) => i.message.includes("ECU"));
+    expect(ecuIssue).toBeDefined();
+    expect(ecuIssue?.targetId).toBeUndefined();
+  });
+
+  it("document-level issue: documentIndex is a non-negative integer", () => {
+    const docContent: JSONContent[] = [para("The ECU output is undefined.")];
+    const issues = undefinedAcronymsRule.check([], docCfg(), docContent);
+    const ecuIssue = issues.find((i) => i.message.includes("ECU"));
+    expect(ecuIssue?.documentIndex).toBeTypeOf("number");
+    expect(ecuIssue!.documentIndex).toBeGreaterThanOrEqual(0);
+  });
+
+  it("requirement-context issue: targetId is set to the req ID", () => {
+    const docContent: JSONContent[] = [
+      heading(1, "REQ_042"),
+      para("The ECU shall respond."),
+    ];
+    const issues = undefinedAcronymsRule.check(
+      [req("REQ_042", "")],
+      docCfg(),
+      docContent,
+    );
+    const ecuIssue = issues.find((i) => i.message.includes("ECU"));
+    expect(ecuIssue?.targetId).toBe("REQ_042");
+  });
+
+  it("requirement-context issue: documentIndex is also set", () => {
+    const docContent: JSONContent[] = [
+      heading(1, "REQ_001"),
+      para("The ECU shall respond."),
+    ];
+    const issues = undefinedAcronymsRule.check(
+      [req("REQ_001", "")],
+      docCfg(),
+      docContent,
+    );
+    const ecuIssue = issues.find((i) => i.message.includes("ECU"));
+    expect(ecuIssue?.documentIndex).toBeTypeOf("number");
+  });
+
+  it("document-level message: no '{id}: ' prefix", () => {
+    const docContent: JSONContent[] = [para("The ECU output is undefined.")];
+    const issues = undefinedAcronymsRule.check([], docCfg(), docContent);
+    const ecuIssue = issues.find((i) => i.message.includes("ECU"));
+    expect(ecuIssue?.message).toBeDefined();
+    expect(ecuIssue?.message).not.toMatch(/^[A-Z_0-9]+:/);
+    expect(ecuIssue?.message).toContain("appears to be an undefined acronym");
+  });
+
+  it("requirement-context message: preserves '{id}: ' prefix", () => {
+    const docContent: JSONContent[] = [
+      heading(1, "REQ_007"),
+      para("The ECU shall respond."),
+    ];
+    const issues = undefinedAcronymsRule.check(
+      [req("REQ_007", "")],
+      docCfg(),
+      docContent,
+    );
+    const ecuIssue = issues.find((i) => i.message.includes("ECU"));
+    expect(ecuIssue?.message).toMatch(/^REQ_007:/);
+  });
+
+  it("issue IDs are unique across all issues in one run", () => {
+    const docContent: JSONContent[] = [
+      para("The ECU system uses CAN and ABS."),
+      heading(1, "REQ_001"),
+      para("ECU output via CAN shall be verified."),
+    ];
+    const issues = undefinedAcronymsRule.check(
+      [req("REQ_001", "")],
+      docCfg(),
+      docContent,
+    );
+    const ids = issues.map((i) => i.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+// ── undefinedAcronymsRule — dedup and aggregation regressions ─────────────────
+
+describe("undefinedAcronymsRule — docContent: dedup and aggregation", () => {
+  it("same acronym in 2 paragraphs under one requirement → exactly 1 issue", () => {
+    const docContent: JSONContent[] = [
+      heading(1, "REQ_001"),
+      para("The ECU shall respond."),
+      para("The ECU output voltage is measured."),
+    ];
+    const issues = undefinedAcronymsRule.check([req("REQ_001", "")], docCfg(), docContent);
+    expect(issues.filter((i) => i.message.includes("ECU"))).toHaveLength(1);
+    expect(issues[0].targetId).toBe("REQ_001");
+  });
+
+  it("same acronym in 2 non-requirement paragraphs → exactly 1 issue (doc-context dedup)", () => {
+    const docContent: JSONContent[] = [
+      para("The ECU system needs review."),
+      para("The ECU output must be stable."),
+    ];
+    const issues = undefinedAcronymsRule.check([], docCfg(), docContent);
+    expect(issues.filter((i) => i.message.includes("ECU"))).toHaveLength(1);
+    expect(issues[0].targetId).toBeUndefined();
+  });
+
+  it("same acronym before definition in 2 different requirements → 1 issue per requirement", () => {
+    const docContent: JSONContent[] = [
+      heading(1, "REQ_001"),
+      para("The ECU shall respond."),
+      heading(1, "REQ_002"),
+      para("The ECU output voltage."),
+    ];
+    const issues = undefinedAcronymsRule.check(
+      [req("REQ_001", ""), req("REQ_002", "")],
+      docCfg(),
+      docContent,
+    );
+    const ecuIssues = issues.filter((i) => i.message.includes("ECU"));
+    expect(ecuIssues).toHaveLength(2);
+    expect(ecuIssues.some((i) => i.targetId === "REQ_001")).toBe(true);
+    expect(ecuIssues.some((i) => i.targetId === "REQ_002")).toBe(true);
+  });
+
+  it("3 document-level blocks with different acronyms → 3 distinct issues with unique IDs", () => {
+    const docContent: JSONContent[] = [
+      para("The ECU system operates."),
+      para("The CAN bus transmits."),
+      para("The ABS must activate."),
+    ];
+    const issues = undefinedAcronymsRule.check([], docCfg(), docContent);
+    const found = issues.filter((i) => ["ECU", "CAN", "ABS"].some((t) => i.message.includes(t)));
+    expect(found).toHaveLength(3);
+    expect(new Set(found.map((i) => i.id)).size).toBe(3);
+    found.forEach((i) => expect(i.targetId).toBeUndefined());
+  });
+
+  it("mixed requirement and document issues are both present", () => {
+    const docContent: JSONContent[] = [
+      para("The ECU is mentioned."),
+      heading(1, "REQ_001"),
+      para("The CAN bus transmits."),
+    ];
+    const issues = undefinedAcronymsRule.check([req("REQ_001", "")], docCfg(), docContent);
+    const docIssue = issues.find((i) => i.targetId === undefined && i.message.includes("ECU"));
+    const reqIssue = issues.find((i) => i.targetId === "REQ_001" && i.message.includes("CAN"));
+    expect(docIssue).toBeDefined();
+    expect(reqIssue).toBeDefined();
+  });
+
+  it("issue IDs are unique after per-context dedup (same acronym under same req in 2 paras)", () => {
+    const docContent: JSONContent[] = [
+      heading(1, "REQ_001"),
+      para("The ECU shall respond."),
+      para("The ECU output voltage."),
+    ];
+    const issues = undefinedAcronymsRule.check([req("REQ_001", "")], docCfg(), docContent);
+    expect(new Set(issues.map((i) => i.id)).size).toBe(issues.length);
+    // Dedup: only 1 ECU issue for REQ_001
+    expect(issues.filter((i) => i.message.includes("ECU"))).toHaveLength(1);
+  });
+
+  it("acronym table with 'Definitions' (plural) col-1 header is recognized", () => {
+    const docContent: JSONContent[] = [
+      acronymTable("Acronym", "Definitions", [["ECU", "Electronic Control Unit"]]),
+      para("The ECU shall respond."),
+    ];
+    const issues = undefinedAcronymsRule.check([], docCfg(), docContent);
+    expect(issues.filter((i) => i.message.includes("ECU"))).toHaveLength(0);
+  });
+
+  it("acronym table with 'Meanings' (plural) col-1 header is recognized", () => {
+    const docContent: JSONContent[] = [
+      acronymTable("Term", "Meanings", [["CAN", "Controller Area Network"]]),
+      para("The CAN bus shall transmit."),
+    ];
+    const issues = undefinedAcronymsRule.check([], docCfg(), docContent);
+    expect(issues.filter((i) => i.message.includes("CAN"))).toHaveLength(0);
+  });
+
+  it("acronym table after first usage: pre-definition issue remains, later usage clean", () => {
+    const docContent: JSONContent[] = [
+      heading(1, "REQ_001"),
+      para("The ECU shall respond."),
+      acronymTable("Acronym", "Definition", [["ECU", "Electronic Control Unit"]]),
+      heading(1, "REQ_002"),
+      para("The ECU output shall be stable."),
+    ];
+    const issues = undefinedAcronymsRule.check(
+      [req("REQ_001", ""), req("REQ_002", "")],
+      docCfg(),
+      docContent,
+    );
+    expect(issues.some((i) => i.targetId === "REQ_001" && i.message.includes("ECU"))).toBe(true);
+    expect(issues.some((i) => i.targetId === "REQ_002" && i.message.includes("ECU"))).toBe(false);
+  });
+});
+
+// ── Integration regressions ───────────────────────────────────────────────────
+
+describe("undefinedAcronymsRule — integration: runAllValidations with docContent", () => {
+  it("runAllValidations with docContent fires document-wide scan: issue has documentIndex", () => {
+    const docContent: JSONContent[] = [
+      para("The ECU output shall not exceed limits."),
+    ];
+    const issues = runAllValidations([], new Set(), docContent);
+    const ecuIssue = issues.find((i) => i.type === "undefined-acronym" && i.message.includes("ECU"));
+    expect(ecuIssue).toBeDefined();
+    expect(ecuIssue?.documentIndex).toBeTypeOf("number");
+    expect(ecuIssue?.targetId).toBeUndefined();
+  });
+
+  it("runAllValidations without docContent fires fallback scan: issue has targetId", () => {
+    const reqs = [req("REQ_001", "The ECU shall respond.")];
+    const issues = runAllValidations(reqs, new Set());
+    const ecuIssue = issues.find((i) => i.type === "undefined-acronym" && i.message.includes("ECU"));
+    expect(ecuIssue).toBeDefined();
+    expect(ecuIssue?.targetId).toBe("REQ_001");
   });
 });

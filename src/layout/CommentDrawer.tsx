@@ -489,6 +489,7 @@ export function CommentDrawer({ record, onClose }: CommentDrawerProps) {
     ),
   );
   const addComment = useReviewCommentsStore((s) => s.addComment);
+  const reviewLoaded = useReviewCommentsStore((s) => s.loaded);
 
   const { configured, save } = useUserSettingsStore();
 
@@ -578,31 +579,37 @@ export function CommentDrawer({ record, onClose }: CommentDrawerProps) {
     filterTab === "all" ? comments : comments.filter((c) => c.status === filterTab);
 
   return (
-    <div className="flex w-80 shrink-0 flex-col border-l border-[var(--color-border)]">
-      {/* Header: req ID / section number + status chip (req only) + close button */}
+    // h-full fills the App.tsx wrapper div, which gets its height via align-self:stretch
+    // in the workspace flex row. w-full fills the wrapper's dynamic width.
+    <div className="flex h-full w-full flex-col border-l border-[var(--color-border)] bg-[var(--color-paper)]">
+      {/* Header: req ID on line 1; status chip + comment count on line 2 */}
       <div className="flex items-start justify-between border-b border-[var(--color-border)] px-4 py-3">
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-0.5">
           <span className="font-mono text-sm font-semibold text-[var(--color-text)]">{displayId}</span>
-          {!isSectionTarget && <ReqStatusChip status={record.status} />}
-          {comments.length > 0 && (
-            <p className="text-[10px] text-[var(--color-muted)]">
-              {comments.length} comment{comments.length !== 1 ? "s" : ""}
-              {openCount > 0 && (
-                <span className="ml-1 font-medium text-red-600 dark:text-red-400">
-                  · {openCount} open
+          {(!isSectionTarget || comments.length > 0) && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {!isSectionTarget && <ReqStatusChip status={record.status} />}
+              {comments.length > 0 && (
+                <span className="text-[10px] text-[var(--color-muted)]">
+                  {comments.length} comment{comments.length !== 1 ? "s" : ""}
+                  {openCount > 0 && (
+                    <span className="ml-1 font-medium text-red-600 dark:text-red-400">
+                      · {openCount} open
+                    </span>
+                  )}
+                  {respondedCount > 0 && openCount === 0 && (
+                    <span className="ml-1 font-medium text-amber-600 dark:text-amber-400">
+                      · {respondedCount} responded
+                    </span>
+                  )}
+                  {openCount === 0 && respondedCount === 0 && closedCount > 0 && (
+                    <span className="ml-1 font-medium text-green-600 dark:text-green-400">
+                      · all closed
+                    </span>
+                  )}
                 </span>
               )}
-              {respondedCount > 0 && openCount === 0 && (
-                <span className="ml-1 font-medium text-amber-600 dark:text-amber-400">
-                  · {respondedCount} responded
-                </span>
-              )}
-              {openCount === 0 && respondedCount === 0 && closedCount > 0 && (
-                <span className="ml-1 font-medium text-green-600 dark:text-green-400">
-                  · all closed
-                </span>
-              )}
-            </p>
+            </div>
           )}
         </div>
         <button
@@ -624,18 +631,17 @@ export function CommentDrawer({ record, onClose }: CommentDrawerProps) {
         </button>
       </div>
 
-      {/* Add button */}
-      <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-2">
-        <span className="text-xs font-semibold text-[var(--color-text)]">Comments</span>
-        {!adding && !showSetup && (
+      {/* Add button — "Comments" label removed; button is the primary action */}
+      {!adding && !showSetup && (
+        <div className="flex items-center justify-end border-b border-[var(--color-border)] px-4 py-2">
           <button
             onClick={() => gate(() => setAdding(true))}
             className="rounded border border-[var(--color-border)] px-2.5 py-1 text-[11px] text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors"
           >
             + Add
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Filter tabs (only when there are comments and not in setup mode) */}
       {comments.length > 0 && !showSetup && (
@@ -649,6 +655,35 @@ export function CommentDrawer({ record, onClose }: CommentDrawerProps) {
           <UserNameSetup onSave={handleSetupSave} onCancel={handleSetupCancel} />
         ) : (
           <>
+            {/* Empty state — hidden while the add form is open */}
+            {!adding && comments.length === 0 && (
+              <div className="flex flex-1 flex-col items-center justify-center gap-1 text-center text-xs text-[var(--color-muted)]">
+                {reviewLoaded ? (
+                  <p>No comments on this requirement.</p>
+                ) : (
+                  <>
+                    <p>No review loaded.</p>
+                    <p className="opacity-60">
+                      Add comments now, or load a review file to see existing ones.
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* No-results message for active filter — hidden while the add form is open */}
+            {!adding && comments.length > 0 && filteredComments.length === 0 && (
+              <p className="py-4 text-center text-xs text-[var(--color-muted)]">
+                No {filterTab} comments.
+              </p>
+            )}
+
+            {/* Comment thread */}
+            {filteredComments.map((c) => (
+              <CommentCard key={c.id} comment={c} reqId={reqId} onGate={gate} />
+            ))}
+
+            {/* New comment form at the bottom of the thread */}
             {adding && (
               <CommentForm
                 onSave={(text) => {
@@ -657,21 +692,6 @@ export function CommentDrawer({ record, onClose }: CommentDrawerProps) {
                 }}
                 onCancel={() => setAdding(false)}
               />
-            )}
-
-            {comments.length === 0 && !adding ? (
-              <div className="flex flex-1 flex-col items-center justify-center gap-1 text-center text-xs text-[var(--color-muted)]">
-                <p>No comments yet.</p>
-                <p className="opacity-60">Click &ldquo;Add&rdquo; to leave a note.</p>
-              </div>
-            ) : filteredComments.length === 0 ? (
-              <p className="py-4 text-center text-xs text-[var(--color-muted)]">
-                No {filterTab} comments.
-              </p>
-            ) : (
-              filteredComments.map((c) => (
-                <CommentCard key={c.id} comment={c} reqId={reqId} onGate={gate} />
-              ))
             )}
           </>
         )}

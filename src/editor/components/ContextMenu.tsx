@@ -13,22 +13,26 @@ interface MenuItemProps {
   label: string;
   shortcut?: string;
   active?: boolean;
+  disabled?: boolean;
   onClick: () => void;
 }
 
-function MenuItem({ label, shortcut, active, onClick }: MenuItemProps) {
+function MenuItem({ label, shortcut, active, disabled, onClick }: MenuItemProps) {
   return (
     <button
       type="button"
+      disabled={disabled}
       onMouseDown={(e) => {
         e.preventDefault();
-        onClick();
+        if (!disabled) onClick();
       }}
       className={[
         "flex w-full items-center justify-between gap-4 rounded px-2.5 py-1.5 text-sm text-left transition-colors",
-        active
-          ? "bg-blue-50 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200"
-          : "text-[var(--color-text)] hover:bg-black/5 dark:hover:bg-white/8",
+        disabled
+          ? "cursor-not-allowed opacity-40 text-[var(--color-text)]"
+          : active
+            ? "bg-blue-50 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200"
+            : "text-[var(--color-text)] hover:bg-black/5 dark:hover:bg-white/8",
       ].join(" ")}
     >
       <span>{label}</span>
@@ -41,6 +45,14 @@ function MenuItem({ label, shortcut, active, onClick }: MenuItemProps) {
 
 function MenuDivider() {
   return <div className="my-1 h-px bg-[var(--color-border)]" />;
+}
+
+function SectionLabel({ children }: { children: string }) {
+  return (
+    <div className="px-2.5 pb-0.5 pt-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+      {children}
+    </div>
+  );
 }
 
 export function ContextMenu({ editor, x, y, onClose }: ContextMenuProps) {
@@ -58,14 +70,21 @@ export function ContextMenu({ editor, x, y, onClose }: ContextMenuProps) {
       superscript: e.isActive("superscript"),
       subscript: e.isActive("subscript"),
       inTable: e.isActive("table"),
+      // Column alignment (reads from whichever cell type is active)
       cellAlign: e.getAttributes("tableCell").align ?? e.getAttributes("tableHeader").align ?? null,
-      cellVerticalAlign: e.getAttributes("tableCell").verticalAlign ?? e.getAttributes("tableHeader").verticalAlign ?? null,
+      canAddRowBefore: e.can().addRowBefore(),
+      canAddRowAfter: e.can().addRowAfter(),
+      canAddColBefore: e.can().addColumnBefore(),
+      canAddColAfter: e.can().addColumnAfter(),
+      canDeleteRow: e.can().deleteRow(),
+      canDeleteCol: e.can().deleteColumn(),
+      canDeleteTable: e.can().deleteTable(),
     }),
   });
 
   // Clamp position so the menu doesn't overflow the viewport
   const menuWidth = 200;
-  const menuHeight = state.inTable ? 500 : 290;
+  const menuHeight = state.inTable ? 560 : 290;
   const left = Math.min(x, window.innerWidth - menuWidth - 8);
   const top = Math.min(y, window.innerHeight - menuHeight - 8);
 
@@ -163,45 +182,66 @@ export function ContextMenu({ editor, x, y, onClose }: ContextMenuProps) {
         onClick={() => run(() => editor.chain().focus().toggleMark("subscript").run())}
       />
 
-      {/* ── Table alignment (only when cursor is inside a table) ── */}
+      {/* ── Table operations (only when cursor is inside a table) ── */}
       {state.inTable && (
         <>
           <MenuDivider />
-          <div className="px-2.5 pb-0.5 pt-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">
-            Horizontal
-          </div>
+          <SectionLabel>Column Alignment</SectionLabel>
           <MenuItem
             label="Align Left"
             active={state.cellAlign === "left"}
-            onClick={() => run(() => editor.chain().focus().setCellAttribute("align", state.cellAlign === "left" ? null : "left").run())}
+            onClick={() => run(() => editor.chain().focus().setColumnAlign(state.cellAlign === "left" ? null : "left").run())}
           />
           <MenuItem
             label="Align Center"
             active={state.cellAlign === "center"}
-            onClick={() => run(() => editor.chain().focus().setCellAttribute("align", state.cellAlign === "center" ? null : "center").run())}
+            onClick={() => run(() => editor.chain().focus().setColumnAlign(state.cellAlign === "center" ? null : "center").run())}
           />
           <MenuItem
             label="Align Right"
             active={state.cellAlign === "right"}
-            onClick={() => run(() => editor.chain().focus().setCellAttribute("align", state.cellAlign === "right" ? null : "right").run())}
+            onClick={() => run(() => editor.chain().focus().setColumnAlign(state.cellAlign === "right" ? null : "right").run())}
           />
-          <div className="px-2.5 pb-0.5 pt-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">
-            Vertical
-          </div>
+          <MenuDivider />
+          <SectionLabel>Rows</SectionLabel>
           <MenuItem
-            label="Align Top"
-            active={state.cellVerticalAlign === "top"}
-            onClick={() => run(() => editor.chain().focus().setCellAttribute("verticalAlign", state.cellVerticalAlign === "top" ? null : "top").run())}
-          />
-          <MenuItem
-            label="Align Middle"
-            active={state.cellVerticalAlign === "middle"}
-            onClick={() => run(() => editor.chain().focus().setCellAttribute("verticalAlign", state.cellVerticalAlign === "middle" ? null : "middle").run())}
+            label="Add Row Above"
+            disabled={!state.canAddRowBefore}
+            onClick={() => run(() => editor.chain().focus().addRowBefore().run())}
           />
           <MenuItem
-            label="Align Bottom"
-            active={state.cellVerticalAlign === "bottom"}
-            onClick={() => run(() => editor.chain().focus().setCellAttribute("verticalAlign", state.cellVerticalAlign === "bottom" ? null : "bottom").run())}
+            label="Add Row Below"
+            shortcut="⌃↵"
+            disabled={!state.canAddRowAfter}
+            onClick={() => run(() => editor.chain().focus().addRowAfter().run())}
+          />
+          <MenuItem
+            label="Delete Row"
+            disabled={!state.canDeleteRow}
+            onClick={() => run(() => editor.chain().focus().deleteRow().run())}
+          />
+          <MenuDivider />
+          <SectionLabel>Columns</SectionLabel>
+          <MenuItem
+            label="Add Column Left"
+            disabled={!state.canAddColBefore}
+            onClick={() => run(() => editor.chain().focus().addColumnBefore().run())}
+          />
+          <MenuItem
+            label="Add Column Right"
+            disabled={!state.canAddColAfter}
+            onClick={() => run(() => editor.chain().focus().addColumnAfter().run())}
+          />
+          <MenuItem
+            label="Delete Column"
+            disabled={!state.canDeleteCol}
+            onClick={() => run(() => editor.chain().focus().deleteColumn().run())}
+          />
+          <MenuDivider />
+          <MenuItem
+            label="Delete Table"
+            disabled={!state.canDeleteTable}
+            onClick={() => run(() => editor.chain().focus().deleteTable().run())}
           />
         </>
       )}

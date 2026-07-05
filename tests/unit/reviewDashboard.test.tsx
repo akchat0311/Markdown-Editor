@@ -39,6 +39,7 @@ function makeRecord(id: string, overrides: Partial<RequirementRecord> = {}): Req
     status: "draft",
     section: "1. Introduction",
     pmPos: 42,
+    title: id,
     ...overrides,
   };
 }

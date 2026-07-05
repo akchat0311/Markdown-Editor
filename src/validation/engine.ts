@@ -1,4 +1,5 @@
 import qualityRules from "@/config/quality-rules.json";
+import type { JSONContent } from "@tiptap/core";
 import {
   checkRequirementOrder,
   checkDuplicateIds,
@@ -30,6 +31,7 @@ function tag(issues: ValidationIssue[], category: ValidationCategory): Validatio
 export function runAllValidations(
   requirements: ReadonlyArray<RequirementRef>,
   validAliases: ReadonlySet<string>,
+  docContent?: ReadonlyArray<JSONContent>,
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
@@ -55,7 +57,7 @@ export function runAllValidations(
 
   for (const rule of DOC_RULE_REGISTRY) {
     const config = r[rule.id as RuleId];
-    issues.push(...rule.check(requirements, config));
+    issues.push(...rule.check(requirements, config, docContent));
   }
 
   return issues;
