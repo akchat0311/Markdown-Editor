@@ -35,12 +35,10 @@ body {
 /* A4-like document page */
 .doc-page {
   width: 100%;
-  max-width: 816px; /* ~8.5in at 96dpi */
   min-height: 1056px; /* ~11in at 96dpi */
-  margin: 0 auto;
   background-color: var(--color-paper);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 8px 24px rgba(0, 0, 0, 0.06);
-  padding: 72px 88px;
+  padding: 40px 56px;
   border-radius: 2px;
 }
 
@@ -233,6 +231,18 @@ body {
 
 .dark .math-inline-widget:hover {
   background-color: rgba(91, 141, 239, 0.12);
+}
+
+/* Wide KaTeX scrolls within its widget rather than overflowing the cell.
+   max-width:100% on this inline-block resolves against the <p> inside <td>,
+   which has a definite block width even in table-layout:fixed — confirmed in
+   both Chromium and headless WebKit.  overflow-y:hidden suppresses the implicit
+   vertical scrollbar CSS forces when overflow-x is non-visible. */
+.ProseMirror td .math-inline-widget,
+.ProseMirror th .math-inline-widget {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 /* Loading placeholder (KaTeX not yet ready) */

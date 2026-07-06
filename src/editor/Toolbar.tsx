@@ -164,6 +164,8 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
       highlight: e.isActive("highlight"),
       superscript: e.isActive("superscript"),
       subscript: e.isActive("subscript"),
+      // Inline math
+      inlineMath: e.isActive("inlineMath"),
       // Table context
       inTable: e.isActive("table"),
       canAddRowBefore: e.can().addRowBefore(),
@@ -195,8 +197,7 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
       className="flex items-center gap-0.5 rounded-md border border-[var(--color-border)] bg-[var(--color-paper)] p-1 shadow-lg"
       options={{ placement: "top", offset: 8 }}
       shouldShow={({ editor: e, from, to }) =>
-        // Show for text selections OR whenever cursor is inside a table
-        from !== to || e.isActive("table")
+        from !== to || e.isActive("table") || e.isActive("inlineMath")
       }
     >
       {/* ── Text formatting ── */}
@@ -262,6 +263,21 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
       >
         x<sub style={{ fontSize: "0.65em" }}>₂</sub>
       </ToolbarButton>
+
+      {/* ── Remove math (visible only when cursor is inside an inline math range) ── */}
+      {state.inlineMath && (
+        <>
+          <Divider />
+          <ToolbarButton
+            label="Remove math"
+            onClick={() =>
+              editor.chain().focus().extendMarkRange("inlineMath").unsetMark("inlineMath").run()
+            }
+          >
+            <span className="font-mono line-through" style={{ fontSize: "0.75em" }}>$</span>
+          </ToolbarButton>
+        </>
+      )}
 
       {/* ── Table controls (visible only when cursor is in a table) ── */}
       {state.inTable && (

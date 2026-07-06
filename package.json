@@ -43,6 +43,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4.3.1",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
@@ -58,6 +59,7 @@
     "eslint-plugin-react-hooks": "^5.1.0",
     "eslint-plugin-react-refresh": "^0.4.18",
     "jsdom": "^25.0.1",
+    "playwright": "^1.61.1",
     "postcss": "^8.4.49",
     "tailwindcss": "^4.3.1",
     "typescript": "^6.0.3",

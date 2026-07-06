@@ -30,7 +30,7 @@ import {
 } from "@/editor/utils/outlineOps";
 import { serializeDocToMarkdown } from "@/markdown/serializer";
 import { useToastStore } from "@/stores/toastStore";
-import { TextSelection } from "@tiptap/pm/state";
+import { TextSelection, type Transaction } from "@tiptap/pm/state";
 import {
   derivePattern,
   analyzeRequirements,
@@ -1075,19 +1075,28 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
   const [renumberConfirmOpen, setRenumberConfirmOpen] = useState(false);
   const patternTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Outline rebuild (debounced) ─────────────────────────────────────────────
+  // ── Outline rebuild ─────────────────────────────────────────────────────────
+  // Subscribes to `transaction` (not `update`) so that tab-switch content swaps,
+  // which use setMeta("preventUpdate", true) to avoid writing back to the store,
+  // still trigger an outline rebuild. Normal edits are debounced; tab switches
+  // (preventUpdate) rebuild immediately so the outline is never stale after switch.
   useEffect(() => {
     if (!editor) return;
     setOutline(deriveOutline(editor));
-    const onUpdate = () => {
+    const onTransaction = ({ transaction: tr }: { transaction: Transaction }) => {
+      if (!tr.docChanged) return;
       if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => {
+      if (tr.getMeta("preventUpdate")) {
         setOutline(deriveOutline(editor));
-      }, DEBOUNCE_MS);
+      } else {
+        timerRef.current = setTimeout(() => {
+          setOutline(deriveOutline(editor));
+        }, DEBOUNCE_MS);
+      }
     };
-    editor.on("update", onUpdate);
+    editor.on("transaction", onTransaction);
     return () => {
-      editor.off("update", onUpdate);
+      editor.off("transaction", onTransaction);
       if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, [editor]);

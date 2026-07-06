@@ -324,6 +324,82 @@ describe("inline marks inside table cells", () => {
   });
 });
 
+// ── Inline math in table cells ───────────────────────────────────────────────
+
+describe("inline math in table cells", () => {
+  it("simple expression in body cell → stable", () => {
+    const canonical = assertStable("| Header | Formula |\n| --- | --- |\n| Mass-energy | $E = mc^2$ |\n");
+    expect(canonical).toContain("$E = mc^2$");
+  });
+
+  it("header cell with math → stable", () => {
+    const canonical = assertStable("| $\\alpha$ | Value |\n| --- | --- |\n| 1 | 2 |\n");
+    expect(canonical).toContain("$\\alpha$");
+  });
+
+  it("backslash commands survive round-trip", () => {
+    const canonical = assertStable("| Command | Result |\n| --- | --- |\n| frac | $\\frac{1}{2}$ |\n");
+    expect(canonical).toContain("$\\frac{1}{2}$");
+  });
+
+  it("parser places inlineMath mark on text node inside tableCell > paragraph", () => {
+    const doc = parseMarkdownToDoc("| A | B |\n| --- | --- |\n| plain | $x^2$ |\n");
+    const table = doc.content?.[0];
+    const dataRow = table?.content?.[1];
+    const cell = dataRow?.content?.[1];
+    expect(cell?.type).toBe("tableCell");
+    const mathNode = cell?.content?.[0]?.content?.find(
+      (n: any) => n.type === "text" && n.marks?.some((m: any) => m.type === "inlineMath")
+    );
+    expect(mathNode).toBeDefined();
+    expect((mathNode as any).text).toBe("x^2");
+  });
+});
+
+// ── Wide inline math — overflow regression ────────────────────────────────────
+//
+// These expressions are wider than a narrow table cell (3–5 columns at 640px
+// document width) and triggered the overflow audit.  The CSS fix is visual-only;
+// this suite guards the data path: every expression must survive parse→serialize
+// unchanged and be idempotent on a second pass.
+
+describe("wide inline math in narrow table cells — overflow regression", () => {
+  const WIDE: { name: string; src: string }[] = [
+    { name: "nested fraction + sum",  src: "\\frac{\\sum_{i=0}^{n} x_i^2}{\\sqrt{n \\cdot \\sigma^2}}" },
+    { name: "3×3 matrix",             src: "\\begin{pmatrix} a_{11} & a_{12} & a_{13} \\\\ a_{21} & a_{22} & a_{23} \\\\ a_{31} & a_{32} & a_{33} \\end{pmatrix}" },
+    { name: "nested subscripts",      src: "x_{i_{j_{k_{l}}}}" },
+    { name: "long integral",          src: "\\int_{-\\infty}^{+\\infty} e^{-\\frac{x^2}{2\\sigma^2}} \\, dx" },
+    { name: "multi-term product",     src: "\\prod_{k=1}^{n} \\left(1 + \\frac{1}{k^2}\\right)^{2k}" },
+  ];
+
+  for (const { name, src } of WIDE) {
+    it(`${name} → stable and preserved verbatim`, () => {
+      const canonical = assertStable(`| Formula | Value | Unit |\n| --- | --- | --- |\n| $${src}$ | 1.23 | m/s |\n`);
+      expect(canonical).toContain(src);
+    });
+  }
+
+  it("wide math mixed with plain text → stable", () => {
+    const src = "\\sum_{i=1}^{N} w_i \\cdot f(x_i)";
+    const canonical = assertStable(`| Header |\n| --- |\n| Value is $${src}$ here |\n`);
+    expect(canonical).toContain(src);
+  });
+
+  it("two wide expressions in the same cell → both preserved", () => {
+    const a = "\\frac{a}{b}";
+    const b = "\\sum_{i}^{n} x_i";
+    const canonical = assertStable(`| A |\n| --- |\n| $${a}$ and $${b}$ |\n`);
+    expect(canonical).toContain(a);
+    expect(canonical).toContain(b);
+  });
+
+  it("wide expression in header cell → stable", () => {
+    const src = "\\int_0^\\infty f(x) dx";
+    const canonical = assertStable(`| $${src}$ | Value |\n| --- | --- |\n| x | y |\n`);
+    expect(canonical).toContain(src);
+  });
+});
+
 // ── Empty cells ───────────────────────────────────────────────────────────────
 
 describe("empty cells", () => {
