@@ -232,9 +232,23 @@ export function setFindQuery(
   );
 }
 
-export function navigateToMatch(view: MinimalView, index: number): void {
+export function navigateToMatch(view: EditorView, index: number): void {
   const ps = findReplaceKey.getState(view.state);
   if (!ps || ps.matches.length === 0) return;
+
+  // ProseMirror's own scrollIntoView (triggered below via tr.scrollIntoView())
+  // only takes effect when the real DOM selection lives inside view.dom —
+  // both selectionToDOM() and scrollToSelection() bail out silently via their
+  // hasFocus()/editorOwnsSelection() guards otherwise. The find bar
+  // deliberately keeps focus in its <input> so repeated Enter/typing keeps
+  // working, which left PM's scroll machinery permanently gated off during
+  // Next/Previous navigation. Briefly move focus into the editor so PM's
+  // built-in (container- and sticky-toolbar-aware) scroll math actually runs,
+  // then restore focus to wherever it was — view.focus() uses
+  // {preventScroll: true} internally, and the whole sequence is synchronous
+  // (no paint in between), so there's no visible flicker or caret jump.
+  const previouslyFocused = document.activeElement as HTMLElement | null;
+  view.focus();
 
   const match = ps.matches[index];
   const tr = view.state.tr
@@ -242,6 +256,10 @@ export function navigateToMatch(view: MinimalView, index: number): void {
     .setSelection(TextSelection.create(view.state.doc, match.from, match.to))
     .scrollIntoView();
   view.dispatch(tr);
+
+  if (previouslyFocused && previouslyFocused !== view.dom && document.contains(previouslyFocused)) {
+    previouslyFocused.focus();
+  }
 }
 
 export function replaceCurrent(view: MinimalView, replacement: string): void {
