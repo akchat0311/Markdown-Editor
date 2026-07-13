@@ -8,6 +8,11 @@ import {
   renumberRequirements,
   reassignRequirementId,
   computeRenumberReplacements,
+  validateRequirementRegex,
+  compileRequirementPattern,
+  matchRequirementId,
+  describeRequirementPattern,
+  buildRequirementIndex,
   type RequirementEntry,
 } from "@/editor/utils/requirementOps";
 import type { OutlineNode } from "@/types/outline";
@@ -702,5 +707,273 @@ describe("reassignRequirementId", () => {
     // Blockquote container must be unchanged
     expect(result).toBe(content); // same reference (no copy made)
     expect(result[0].type).toBe("blockquote");
+  });
+});
+
+// ── validateRequirementRegex ──────────────────────────────────────────────────
+
+describe("validateRequirementRegex", () => {
+  it("accepts a pattern with an unnamed capture group", () => {
+    expect(validateRequirementRegex("^REQ-(\\d+)")).toEqual({ valid: true, error: null });
+  });
+
+  it("accepts a pattern with a named `id` capture group", () => {
+    expect(validateRequirementRegex("^(?<id>REQ-\\d+)")).toEqual({ valid: true, error: null });
+  });
+
+  it("accepts flags alongside a valid pattern", () => {
+    expect(validateRequirementRegex("^req-(\\d+)", "i")).toEqual({ valid: true, error: null });
+  });
+
+  it("rejects an empty pattern", () => {
+    const result = validateRequirementRegex("");
+    expect(result.valid).toBe(false);
+    expect(result.error).toMatch(/empty/i);
+  });
+
+  it("rejects a pattern with no capture group at all", () => {
+    const result = validateRequirementRegex("^REQ-\\d+");
+    expect(result.valid).toBe(false);
+    expect(result.error).toMatch(/capture group/i);
+  });
+
+  it("rejects a syntactically invalid regex", () => {
+    const result = validateRequirementRegex("^REQ-(\\d+");
+    expect(result.valid).toBe(false);
+    expect(result.error).not.toBeNull();
+  });
+
+  it("rejects an invalid regex even when it also lacks a capture group", () => {
+    // Unbalanced bracket — should surface the syntax error, not a capture-group error.
+    const result = validateRequirementRegex("[");
+    expect(result.valid).toBe(false);
+  });
+});
+
+// ── compileRequirementPattern ─────────────────────────────────────────────────
+
+describe("compileRequirementPattern", () => {
+  it("compiles a bare string as simple mode (backward compatible)", () => {
+    const compiled = compileRequirementPattern("REQ_001");
+    expect(compiled).not.toBeNull();
+    expect(compiled!.mode).toBe("simple");
+    expect(compiled!.supportsNumbering).toBe(true);
+    if (compiled!.mode === "simple") {
+      expect(compiled!.prefix).toBe("REQ_");
+      expect(compiled!.digits).toBe(3);
+    }
+  });
+
+  it("returns null for an invalid simple-mode string", () => {
+    expect(compileRequirementPattern("no-digits")).toBeNull();
+  });
+
+  it("returns null for null/undefined/empty input", () => {
+    expect(compileRequirementPattern(null)).toBeNull();
+    expect(compileRequirementPattern(undefined)).toBeNull();
+    expect(compileRequirementPattern("")).toBeNull();
+  });
+
+  it("compiles a valid regex-mode config", () => {
+    const compiled = compileRequirementPattern({ mode: "regex", source: "^REQ-(\\d+)", flags: "" });
+    expect(compiled).not.toBeNull();
+    expect(compiled!.mode).toBe("regex");
+    expect(compiled!.supportsNumbering).toBe(false);
+    expect(compiled!.prefix).toBeNull();
+    expect(compiled!.digits).toBeNull();
+  });
+
+  it("NEVER returns a usable pattern for an invalid regex — the core safety guarantee", () => {
+    // No capture group: invalid per validateRequirementRegex.
+    expect(compileRequirementPattern({ mode: "regex", source: "^REQ-\\d+", flags: "" })).toBeNull();
+    // Syntactically broken.
+    expect(compileRequirementPattern({ mode: "regex", source: "^REQ-(\\d+", flags: "" })).toBeNull();
+    // Empty source.
+    expect(compileRequirementPattern({ mode: "regex", source: "", flags: "" })).toBeNull();
+  });
+
+  it("strips stateful g/y flags so repeated matches across many strings don't corrupt lastIndex", () => {
+    const compiled = compileRequirementPattern({ mode: "regex", source: "^REQ-(\\d+)", flags: "g" });
+    expect(compiled).not.toBeNull();
+    // If 'g' leaked through, the second exec() on a fresh string could return
+    // null because lastIndex was left non-zero by the first exec().
+    expect(matchRequirementId("REQ-001", compiled!)?.id).toBe("001");
+    expect(matchRequirementId("REQ-002", compiled!)?.id).toBe("002");
+  });
+
+  it("caches and reuses the compiled RegExp instance across repeated calls with an equal pattern", () => {
+    const a = compileRequirementPattern({ mode: "regex", source: "^REQ-(\\d+)", flags: "" });
+    const b = compileRequirementPattern({ mode: "regex", source: "^REQ-(\\d+)", flags: "" });
+    // Different object references (new pattern object each call) but the
+    // cache key is derived from mode+source+flags, so the RegExp is reused.
+    expect(a!.regex).toBe(b!.regex);
+  });
+
+  it("recompiles when the pattern actually changes", () => {
+    const a = compileRequirementPattern({ mode: "regex", source: "^REQ-(\\d+)", flags: "" });
+    const b = compileRequirementPattern({ mode: "regex", source: "^SYS-(\\d+)", flags: "" });
+    expect(a!.regex).not.toBe(b!.regex);
+    // ...and going back to the original pattern recompiles again (single-slot cache).
+    const c = compileRequirementPattern({ mode: "regex", source: "^REQ-(\\d+)", flags: "" });
+    expect(c!.mode).toBe("regex");
+    expect(matchRequirementId("REQ-007", c!)?.id).toBe("007");
+  });
+});
+
+// ── matchRequirementId ────────────────────────────────────────────────────────
+
+describe("matchRequirementId — regex mode", () => {
+  it("uses a named `id` group when present", () => {
+    const compiled = compileRequirementPattern({ mode: "regex", source: "^(?<id>REQ-\\d+)", flags: "" })!;
+    const m = matchRequirementId("REQ-042 Some title", compiled);
+    expect(m).not.toBeNull();
+    expect(m!.id).toBe("REQ-042");
+    expect(m!.num).toBeNull(); // "REQ-042" is not purely numeric
+    expect(m!.matchLength).toBe("REQ-042".length);
+  });
+
+  it("falls back to the first capture group when there's no named `id` group", () => {
+    const compiled = compileRequirementPattern({ mode: "regex", source: "^REQ-(\\d+)", flags: "" })!;
+    const m = matchRequirementId("REQ-042 Some title", compiled);
+    expect(m).not.toBeNull();
+    expect(m!.id).toBe("042");
+    expect(m!.num).toBe(42); // purely numeric capture -> num is populated
+    expect(m!.matchLength).toBe("REQ-042".length); // full match, not just the group
+  });
+
+  it("returns null when the pattern doesn't match at the start of the label", () => {
+    const compiled = compileRequirementPattern({ mode: "regex", source: "^REQ-(\\d+)", flags: "" })!;
+    expect(matchRequirementId("Some heading REQ-042", compiled)).toBeNull();
+    expect(matchRequirementId("Introduction", compiled)).toBeNull();
+  });
+
+  it("respects case-insensitive flag", () => {
+    const compiled = compileRequirementPattern({ mode: "regex", source: "^req-(\\d+)", flags: "i" })!;
+    expect(matchRequirementId("REQ-001", compiled)?.id).toBe("001");
+    expect(matchRequirementId("req-001", compiled)?.id).toBe("001");
+  });
+
+  it("supports non-numeric, alphanumeric IDs a simple pattern can't express", () => {
+    // e.g. Jira-style "PROJ-A17" IDs with a letter in the numeric segment.
+    const compiled = compileRequirementPattern({
+      mode: "regex",
+      source: "^(?<id>PROJ-[A-Z]\\d+)",
+      flags: "",
+    })!;
+    const m = matchRequirementId("PROJ-A17 Login flow", compiled);
+    expect(m).not.toBeNull();
+    expect(m!.id).toBe("PROJ-A17");
+    expect(m!.num).toBeNull();
+  });
+});
+
+// ── describeRequirementPattern ────────────────────────────────────────────────
+
+describe("describeRequirementPattern", () => {
+  it("returns the example string for simple mode", () => {
+    expect(describeRequirementPattern({ mode: "simple", example: "REQ_001" })).toBe("REQ_001");
+  });
+
+  it("returns a /source/flags summary for regex mode", () => {
+    expect(describeRequirementPattern({ mode: "regex", source: "^REQ-(\\d+)", flags: "i" })).toBe(
+      "/^REQ-(\\d+)/i"
+    );
+  });
+
+  it("returns an empty string for null", () => {
+    expect(describeRequirementPattern(null)).toBe("");
+  });
+});
+
+// ── analyzeRequirements — regex mode ──────────────────────────────────────────
+
+describe("analyzeRequirements — regex mode", () => {
+  it("extracts requirements matched by a regex pattern", () => {
+    const flat = [
+      makeNode("REQ-001 Login", 0),
+      makeNode("Some section", 1),
+      makeNode("REQ-002 Logout", 2),
+    ];
+    const content = makeContent([
+      { level: 2, text: "REQ-001 Login" },
+      { level: 2, text: "Some section" },
+      { level: 2, text: "REQ-002 Logout" },
+    ]);
+    const result = analyzeRequirements(flat, content, { mode: "regex", source: "^REQ-(\\d+)", flags: "" });
+    expect(result).not.toBeNull();
+    expect(result!.requirements.map((r) => r.id)).toEqual(["001", "002"]);
+  });
+
+  it("detects duplicates by exact captured id string in regex mode", () => {
+    const flat = [makeNode("REQ-001 A", 0), makeNode("REQ-001 B", 1)];
+    const content = makeContent([
+      { level: 2, text: "REQ-001 A" },
+      { level: 2, text: "REQ-001 B" },
+    ]);
+    const result = analyzeRequirements(flat, content, { mode: "regex", source: "^REQ-(\\d+)", flags: "" });
+    expect(result!.duplicates.get("001")).toHaveLength(2);
+  });
+
+  it("never runs gap ('missing ID') detection in regex mode — documented limitation", () => {
+    const flat = [makeNode("REQ-001 A", 0), makeNode("REQ-005 B", 1)];
+    const content = makeContent([
+      { level: 2, text: "REQ-001 A" },
+      { level: 2, text: "REQ-005 B" },
+    ]);
+    const result = analyzeRequirements(flat, content, { mode: "regex", source: "^REQ-(\\d+)", flags: "" });
+    // Even though 001 and 005 have a numeric gap, regex mode never reports it —
+    // gap detection requires a prefix + digit width to format the missing IDs,
+    // which only simple mode derives.
+    expect(result!.missing).toEqual([]);
+  });
+
+  it("returns null for an invalid regex pattern — never partially applies it", () => {
+    const flat = [makeNode("REQ-001", 0)];
+    expect(
+      analyzeRequirements(flat, [], { mode: "regex", source: "^REQ-\\d+", flags: "" }) // no capture group
+    ).toBeNull();
+    expect(
+      analyzeRequirements(flat, [], { mode: "regex", source: "^REQ-(\\d+", flags: "" }) // syntax error
+    ).toBeNull();
+  });
+
+  it("handles non-numeric alphanumeric IDs without crashing, with no gap detection", () => {
+    const flat = [makeNode("PROJ-A1 x", 0), makeNode("PROJ-B2 y", 1)];
+    const content = makeContent([
+      { level: 2, text: "PROJ-A1 x" },
+      { level: 2, text: "PROJ-B2 y" },
+    ]);
+    const result = analyzeRequirements(flat, content, {
+      mode: "regex",
+      source: "^(?<id>PROJ-[A-Z]\\d+)",
+      flags: "",
+    });
+    expect(result!.requirements.map((r) => r.id)).toEqual(["PROJ-A1", "PROJ-B2"]);
+    expect(result!.missing).toEqual([]);
+  });
+});
+
+// ── buildRequirementIndex — regex mode ────────────────────────────────────────
+
+describe("buildRequirementIndex — regex mode", () => {
+  const STATUSES = [
+    { id: "draft", label: "Draft", order: 1, aliases: ["Draft"] },
+  ];
+
+  it("builds an index using a regex pattern, including status/title extraction", () => {
+    const flat = [makeNode("REQ-001 Login form [Draft]", 0, 2)];
+    const idx = buildRequirementIndex(flat, { mode: "regex", source: "^REQ-(\\d+)", flags: "" }, STATUSES);
+    expect(idx).not.toBeNull();
+    expect(idx!.total).toBe(1);
+    expect(idx!.requirements[0]).toMatchObject({
+      id: "001",
+      status: "draft",
+      title: "Login form",
+    });
+  });
+
+  it("returns null for an invalid regex pattern", () => {
+    const flat = [makeNode("REQ-001", 0)];
+    expect(buildRequirementIndex(flat, { mode: "regex", source: "no-groups-here", flags: "" }, STATUSES)).toBeNull();
   });
 });

@@ -76,10 +76,16 @@ describe("resolveRequirementStatus — alias matching", () => {
     expect(resolveRequirementStatus("",          STATUSES)).toBe("unknown");
   });
 
-  it("is case-exact — only configured aliases pass", () => {
-    // "Approve" is NOT in the aliases list for "approved"
-    expect(resolveRequirementStatus("Approve",   STATUSES)).toBe("unknown");
-    expect(resolveRequirementStatus("REVIEW",    STATUSES)).toBe("unknown");
+  it("still returns unknown for text that isn't any case/whitespace variant of a configured alias", () => {
+    // "Approve" is a different word from "approved", not a case variant of it.
+    expect(resolveRequirementStatus("Approve", STATUSES)).toBe("unknown");
+  });
+
+  it("is case-insensitive — an uppercase variant not explicitly listed still matches", () => {
+    // "REVIEW" (all caps) is not literally in STATUSES's aliases list
+    // (["Review", "review", "In Review"]), but normalizes to the same text
+    // as the configured "review" alias.
+    expect(resolveRequirementStatus("REVIEW", STATUSES)).toBe("review");
   });
 
   it("resolves custom status configs", () => {
@@ -90,6 +96,50 @@ describe("resolveRequirementStatus — alias matching", () => {
     expect(resolveRequirementStatus("Proposed", custom)).toBe("proposed");
     expect(resolveRequirementStatus("VERIFIED", custom)).toBe("verified");
     expect(resolveRequirementStatus("Draft",    custom)).toBe("unknown");
+  });
+});
+
+// ── resolveRequirementStatus — case & whitespace normalization regression ────
+//
+// The canonical alias is configured as "Ready for review" (mirrors the real
+// FALLBACK_STATUSES entry in requirementStatusService.ts). Every case variant
+// and whitespace irregularity below must resolve to the same configured
+// status, while the configured alias/label itself is never rewritten.
+
+describe("resolveRequirementStatus — case and whitespace insensitivity regression", () => {
+  const READY_STATUSES: RequirementStatus[] = [
+    { id: "draft", label: "Draft", order: 1, aliases: ["Draft"] },
+    { id: "ready", label: "Ready for review", order: 2, aliases: ["Ready for review"] },
+  ];
+
+  it.each([
+    "Ready For Review",
+    "READY FOR REVIEW",
+    "Ready for review",
+    "ready For Review",
+    "ready for review",
+  ])("resolves %j to the configured \"ready\" status", (variant) => {
+    expect(resolveRequirementStatus(variant, READY_STATUSES)).toBe("ready");
+  });
+
+  it("resolves with leading/trailing whitespace", () => {
+    expect(resolveRequirementStatus("  Ready for review  ", READY_STATUSES)).toBe("ready");
+    expect(resolveRequirementStatus("\tREADY FOR REVIEW\n", READY_STATUSES)).toBe("ready");
+  });
+
+  it("resolves with multiple internal spaces collapsed", () => {
+    expect(resolveRequirementStatus("Ready   for    review", READY_STATUSES)).toBe("ready");
+    expect(resolveRequirementStatus("READY  FOR   REVIEW", READY_STATUSES)).toBe("ready");
+  });
+
+  it("combines whitespace and case irregularities in a single input", () => {
+    expect(resolveRequirementStatus("  ready For   REVIEW  ", READY_STATUSES)).toBe("ready");
+  });
+
+  it("does not mutate the configured status's canonical label or aliases", () => {
+    resolveRequirementStatus("READY FOR REVIEW", READY_STATUSES);
+    expect(READY_STATUSES[1].label).toBe("Ready for review");
+    expect(READY_STATUSES[1].aliases).toEqual(["Ready for review"]);
   });
 });
 

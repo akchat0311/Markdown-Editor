@@ -6,6 +6,7 @@ import {
   analyzeRequirements,
   extractStatusText,
 } from "@/editor/utils/requirementOps";
+import type { RequirementPatternInput } from "@/editor/utils/requirementOps";
 import { getNodeSectionRange } from "@/editor/utils/outlineOps";
 import { resolveRequirementStatus } from "@/services/requirementStatusService";
 import {
@@ -68,7 +69,8 @@ function sectionBodyText(docContent: JSONContent[], nodeIndex: number, level: nu
  * @param flat        Flattened outline from flattenOutline(deriveOutline(editor)).
  * @param docContent  editor.state.doc.content.toJSON() as JSONContent[].
  * @param documentName  File name used in the "Document" column.
- * @param patternExample  User's requirement pattern example string.
+ * @param pattern     User's requirement pattern (simple example string, or a
+ *                    full RequirementPattern config — simple or regex mode).
  * @param statuses    Loaded status definitions for label resolution.
  * @param commentsData  reviewCommentsStore.getState().comments.
  */
@@ -76,15 +78,15 @@ export function collectReviewExportRows(
   flat: OutlineNode[],
   docContent: JSONContent[],
   documentName: string,
-  patternExample: string | null,
+  pattern: RequirementPatternInput,
   statuses: RequirementStatus[],
   commentsData: ReviewFile,
 ): ReviewExportRow[] {
   // Build requirement metadata lookup: reqId → { statusLabel, bodyText }
   const reqMeta = new Map<string, { statusLabel: string; bodyText: string }>();
 
-  if (patternExample) {
-    const analysis = analyzeRequirements(flat, docContent, patternExample);
+  if (pattern) {
+    const analysis = analyzeRequirements(flat, docContent, pattern);
     if (analysis) {
       for (const entry of analysis.requirements) {
         const rawStatus = extractStatusText(entry.node.label);

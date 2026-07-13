@@ -7,7 +7,7 @@ import { RequirementsTab } from "@/layout/tabs/RequirementsTab";
 import { ReviewsTab } from "@/layout/tabs/ReviewsTab";
 import { InsightsTab } from "@/layout/tabs/InsightsTab";
 import { deriveOutline, flattenOutline } from "@/editor/utils/deriveOutline";
-import { derivePattern, buildDetectionRegex } from "@/editor/utils/requirementOps";
+import { compileRequirementPattern, matchRequirementId } from "@/editor/utils/requirementOps";
 import type { RequirementRecord } from "@/editor/utils/requirementOps";
 
 // ── Tab configuration ─────────────────────────────────────────────────────────
@@ -68,15 +68,10 @@ export function Dashboard({
   const handleNavigateByTargetId = useCallback(
     (targetId: string) => {
       if (!editor) return;
-      if (!requirementPattern) return;
-      const derived = derivePattern(requirementPattern.example);
-      if (!derived) return;
-      const regex = buildDetectionRegex(derived.prefix);
+      const compiled = compileRequirementPattern(requirementPattern);
+      if (!compiled) return;
       const flat = flattenOutline(deriveOutline(editor));
-      const target = flat.find((n) => {
-        const m = n.label.match(regex);
-        return m ? derived.prefix + m[1] === targetId : false;
-      });
+      const target = flat.find((n) => matchRequirementId(n.label, compiled)?.id === targetId);
       if (!target) return;
       onNavigateToEditor(target.pmPos);
     },

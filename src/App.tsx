@@ -80,6 +80,7 @@ export default function App() {
   const adjustRightPanel = useUIStore((s) => s.adjustRightPanel);
   const sourceMode = useUIStore((s) => s.sourceMode);
   const toggleSourceMode = useUIStore((s) => s.toggleSourceMode);
+  const toggleSplitView = useUIStore((s) => s.toggleSplitView);
 
   const tabState = useTabStore();
   const activeTab = getActiveTab(tabState);
@@ -427,9 +428,9 @@ export default function App() {
 
   // ── Document validation ───────────────────────────────────────────────────────
 
-  const requirementPatternExample = useConfigStore((s) => s.requirementPattern?.example ?? null);
+  const requirementPatternForValidation = useConfigStore((s) => s.requirementPattern);
   const setValidationIssues = useValidationStore((s) => s.setIssues);
-  const validationIssues = useDocumentValidation(editor, requirementPatternExample);
+  const validationIssues = useDocumentValidation(editor, requirementPatternForValidation);
   const prevIssueCountRef = useRef(0);
 
   useEffect(() => {
@@ -845,7 +846,7 @@ export default function App() {
       flat,
       docContent,
       documentName,
-      requirementPattern?.example ?? null,
+      requirementPattern,
       statuses,
       comments,
     );
@@ -936,6 +937,7 @@ export default function App() {
     handleSaveAs,
     handleSaveWorkspace,
     toggleSourceMode,
+    toggleSplitView,
     handleRequestClose,
   });
   useEffect(() => {
@@ -947,6 +949,7 @@ export default function App() {
       handleSaveAs,
       handleSaveWorkspace,
       toggleSourceMode,
+      toggleSplitView,
       handleRequestClose,
     };
   });
@@ -965,6 +968,11 @@ export default function App() {
       if (e.key === "/") {
         e.preventDefault();
         handlersRef.current.toggleSourceMode();
+        return;
+      }
+      if (e.key === "\\") {
+        e.preventDefault();
+        handlersRef.current.toggleSplitView();
         return;
       }
       if (e.key === "n") {

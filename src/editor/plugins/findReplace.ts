@@ -55,7 +55,7 @@ export function buildFindRegex(
 
 // ── Match finder ───────────────────────────────────────────────────────────────
 
-function findAllMatches(doc: PMNode, regex: RegExp): FindMatch[] {
+export function findAllMatches(doc: PMNode, regex: RegExp): FindMatch[] {
   const matches: FindMatch[] = [];
 
   doc.descendants((node, pos) => {
@@ -232,37 +232,42 @@ export function setFindQuery(
   );
 }
 
+// ProseMirror's own scrollIntoView (triggered via tr.scrollIntoView()) only
+// takes effect when the real DOM selection lives inside view.dom — both
+// selectionToDOM() and scrollToSelection() bail out silently via their
+// hasFocus()/editorOwnsSelection() guards otherwise. The find bar
+// deliberately keeps focus in its <input> so repeated Enter/typing keeps
+// working, which leaves PM's scroll machinery permanently gated off during
+// find/replace navigation. This helper briefly moves focus into the editor
+// so PM's built-in (container- and sticky-toolbar-aware) scroll math
+// actually runs, dispatches the given transaction (which must already carry
+// `.scrollIntoView()` if scrolling is desired), then restores focus to
+// wherever it was — view.focus() uses {preventScroll: true} internally, and
+// the whole sequence is synchronous (no paint in between), so there's no
+// visible flicker or caret jump.
+function dispatchWithFocusedScroll(view: EditorView, tr: Transaction): void {
+  const previouslyFocused = document.activeElement as HTMLElement | null;
+  view.focus();
+  view.dispatch(tr);
+  if (previouslyFocused && previouslyFocused !== view.dom && document.contains(previouslyFocused)) {
+    previouslyFocused.focus();
+  }
+}
+
 export function navigateToMatch(view: EditorView, index: number): void {
   const ps = findReplaceKey.getState(view.state);
   if (!ps || ps.matches.length === 0) return;
-
-  // ProseMirror's own scrollIntoView (triggered below via tr.scrollIntoView())
-  // only takes effect when the real DOM selection lives inside view.dom —
-  // both selectionToDOM() and scrollToSelection() bail out silently via their
-  // hasFocus()/editorOwnsSelection() guards otherwise. The find bar
-  // deliberately keeps focus in its <input> so repeated Enter/typing keeps
-  // working, which left PM's scroll machinery permanently gated off during
-  // Next/Previous navigation. Briefly move focus into the editor so PM's
-  // built-in (container- and sticky-toolbar-aware) scroll math actually runs,
-  // then restore focus to wherever it was — view.focus() uses
-  // {preventScroll: true} internally, and the whole sequence is synchronous
-  // (no paint in between), so there's no visible flicker or caret jump.
-  const previouslyFocused = document.activeElement as HTMLElement | null;
-  view.focus();
 
   const match = ps.matches[index];
   const tr = view.state.tr
     .setMeta(findReplaceKey, { type: "navigate", currentMatchIndex: index } satisfies FindReplaceMeta)
     .setSelection(TextSelection.create(view.state.doc, match.from, match.to))
     .scrollIntoView();
-  view.dispatch(tr);
 
-  if (previouslyFocused && previouslyFocused !== view.dom && document.contains(previouslyFocused)) {
-    previouslyFocused.focus();
-  }
+  dispatchWithFocusedScroll(view, tr);
 }
 
-export function replaceCurrent(view: MinimalView, replacement: string): void {
+export function replaceCurrent(view: EditorView, replacement: string): void {
   const ps = findReplaceKey.getState(view.state);
   if (!ps || ps.currentMatchIndex < 0) return;
 
@@ -275,13 +280,25 @@ export function replaceCurrent(view: MinimalView, replacement: string): void {
     : -1;
 
   const tr = view.state.tr.insertText(replacement, match.from, match.to);
-  // After insertion the plugin will recompute; stash the desired next index
-  // by sending it as meta on the same transaction
   tr.setMeta(findReplaceKey, {
     type: "navigate",
     currentMatchIndex: nextIndex,
   } satisfies FindReplaceMeta);
-  view.dispatch(tr);
+
+  // Resolve the post-replacement match positions ourselves (mirroring what
+  // the plugin's apply() will compute) so we can set the selection to the
+  // new active match and scroll to it within this same transaction, instead
+  // of waiting on a second render/dispatch cycle.
+  const regex = buildFindRegex(ps.query, ps.caseSensitive, ps.wholeWord, ps.useRegex);
+  const freshMatches = regex ? findAllMatches(tr.doc, regex) : [];
+  const clampedIndex =
+    freshMatches.length === 0 ? -1 : Math.min(nextIndex < 0 ? 0 : nextIndex, freshMatches.length - 1);
+  const nextMatch = clampedIndex >= 0 ? freshMatches[clampedIndex] : null;
+  if (nextMatch) {
+    tr.setSelection(TextSelection.create(tr.doc, nextMatch.from, nextMatch.to)).scrollIntoView();
+  }
+
+  dispatchWithFocusedScroll(view, tr);
 }
 
 export function replaceAll(view: MinimalView, replacement: string): void {

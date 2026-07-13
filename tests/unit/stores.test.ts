@@ -121,4 +121,96 @@ describe("uiStore", () => {
     useUIStore.getState().toggleTheme();
     expect(useUIStore.getState().theme).toBe("light");
   });
+
+  // ── Split view (dockable source pane) ─────────────────────────────────────
+
+  describe("split view", () => {
+    it("starts closed, uncollapsed, with the default splitter width", () => {
+      const initial = useUIStore.getInitialState();
+      expect(initial.splitViewOpen).toBe(false);
+      expect(initial.splitCollapsedPane).toBe("none");
+      expect(initial.splitSourceWidth).toBe(480);
+    });
+
+    it("toggleSplitView flips splitViewOpen", () => {
+      useUIStore.setState({ splitViewOpen: false, sourceMode: false });
+      useUIStore.getState().toggleSplitView();
+      expect(useUIStore.getState().splitViewOpen).toBe(true);
+      useUIStore.getState().toggleSplitView();
+      expect(useUIStore.getState().splitViewOpen).toBe(false);
+    });
+
+    it("splitViewOpen and sourceMode are mutually exclusive: opening split view closes source mode", () => {
+      useUIStore.setState({ sourceMode: true, splitViewOpen: false });
+      useUIStore.getState().setSplitViewOpen(true);
+      expect(useUIStore.getState().splitViewOpen).toBe(true);
+      expect(useUIStore.getState().sourceMode).toBe(false);
+    });
+
+    it("splitViewOpen and sourceMode are mutually exclusive: enabling source mode closes split view", () => {
+      useUIStore.setState({ sourceMode: false, splitViewOpen: true });
+      useUIStore.getState().setSourceMode(true);
+      expect(useUIStore.getState().sourceMode).toBe(true);
+      expect(useUIStore.getState().splitViewOpen).toBe(false);
+    });
+
+    it("toggleSourceMode also closes split view when turning source mode on", () => {
+      useUIStore.setState({ sourceMode: false, splitViewOpen: true });
+      useUIStore.getState().toggleSourceMode();
+      expect(useUIStore.getState().sourceMode).toBe(true);
+      expect(useUIStore.getState().splitViewOpen).toBe(false);
+    });
+
+    it("toggleSplitView also closes source mode when turning split view on", () => {
+      useUIStore.setState({ sourceMode: true, splitViewOpen: false });
+      useUIStore.getState().toggleSplitView();
+      expect(useUIStore.getState().splitViewOpen).toBe(true);
+      expect(useUIStore.getState().sourceMode).toBe(false);
+    });
+
+    it("turning either mode off does not disturb the other", () => {
+      useUIStore.setState({ sourceMode: false, splitViewOpen: false });
+      useUIStore.getState().setSplitViewOpen(false);
+      expect(useUIStore.getState().sourceMode).toBe(false);
+      useUIStore.getState().setSourceMode(false);
+      expect(useUIStore.getState().splitViewOpen).toBe(false);
+    });
+
+    it("adjustSplitSourceWidth clamps within bounds", () => {
+      useUIStore.setState({ splitSourceWidth: 480 });
+      useUIStore.getState().adjustSplitSourceWidth(10000);
+      expect(useUIStore.getState().splitSourceWidth).toBe(1000);
+      useUIStore.getState().adjustSplitSourceWidth(-10000);
+      expect(useUIStore.getState().splitSourceWidth).toBe(280);
+    });
+
+    it("setSplitSourceWidth clamps within bounds", () => {
+      useUIStore.getState().setSplitSourceWidth(50);
+      expect(useUIStore.getState().splitSourceWidth).toBe(280);
+      useUIStore.getState().setSplitSourceWidth(5000);
+      expect(useUIStore.getState().splitSourceWidth).toBe(1000);
+    });
+
+    it("collapseSplitPane hides the given pane", () => {
+      useUIStore.setState({ splitCollapsedPane: "none" });
+      useUIStore.getState().collapseSplitPane("source");
+      expect(useUIStore.getState().splitCollapsedPane).toBe("source");
+      useUIStore.getState().collapseSplitPane("editor");
+      expect(useUIStore.getState().splitCollapsedPane).toBe("editor");
+    });
+
+    it("maximizeSplitPane hides the OTHER pane", () => {
+      useUIStore.setState({ splitCollapsedPane: "none" });
+      useUIStore.getState().maximizeSplitPane("editor");
+      expect(useUIStore.getState().splitCollapsedPane).toBe("source");
+      useUIStore.getState().maximizeSplitPane("source");
+      expect(useUIStore.getState().splitCollapsedPane).toBe("editor");
+    });
+
+    it("restoreSplitView resets to both panes visible", () => {
+      useUIStore.setState({ splitCollapsedPane: "source" });
+      useUIStore.getState().restoreSplitView();
+      expect(useUIStore.getState().splitCollapsedPane).toBe("none");
+    });
+  });
 });

@@ -2,7 +2,14 @@ import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { Editor, Extension } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { TableKit } from "@tiptap/extension-table";
-import { findReplacePlugin, findReplaceKey, setFindQuery, navigateToMatch } from "@/editor/plugins/findReplace";
+import {
+  findReplacePlugin,
+  findReplaceKey,
+  setFindQuery,
+  navigateToMatch,
+  replaceCurrent,
+  replaceAll,
+} from "@/editor/plugins/findReplace";
 import type { JSONContent } from "@tiptap/core";
 
 // Regression coverage for: Next/Previous/Enter navigation updated the PM
@@ -222,6 +229,143 @@ describe("find/replace: active match is scrolled into view on navigation", () =>
     // called to satisfy PM's scroll precondition, but must not leak — the
     // user should still be able to type in the search box immediately after.
     expect(document.activeElement).not.toBe(editor.view.dom);
+    expect(document.activeElement).toBe(searchInput);
+  });
+});
+
+// Regression coverage for: Replace / Replace & Next performed the
+// replacement and advanced currentMatchIndex correctly, but never scrolled
+// the new active match into view, because replaceCurrent() dispatched
+// directly without the focus precondition that navigateToMatch() uses. The
+// fix reuses the same dispatchWithFocusedScroll() helper as Find, computing
+// the post-replacement match position within the same transaction so the
+// new active match's selection can carry `.scrollIntoView()` immediately.
+describe("find/replace: active match is scrolled into view on Replace", () => {
+  let editor: Editor;
+  let searchInput: HTMLInputElement;
+  let focusTracker: ReturnType<typeof trackFocusCalls>;
+
+  beforeEach(() => {
+    searchInput = document.createElement("input");
+    document.body.appendChild(searchInput);
+    focusTracker = trackFocusCalls();
+  });
+
+  afterEach(() => {
+    editor?.destroy();
+    searchInput.remove();
+    focusTracker.restore();
+  });
+
+  function focusSearchInput() {
+    searchInput.focus();
+    focusTracker.calls.length = 0; // ignore the setup focus() call itself
+  }
+
+  it("Replace: replacing the current match scrolls the new active match into view and restores focus", () => {
+    editor = new Editor({ extensions: makeTestExtensions(), content: paragraphDoc(["foo", "foo", "foo"]) });
+    query(editor, "foo");
+    focusSearchInput();
+
+    replaceCurrent(editor.view, "bar");
+
+    const remaining = matches(editor);
+    expect(remaining).toHaveLength(2);
+    expect(currentIndex(editor)).toBe(0);
+    expect(editor.state.selection.from).toBe(remaining[0].from);
+    expect(focusTracker.calls).toContain(editor.view.dom);
+    expect(document.activeElement).toBe(searchInput);
+  });
+
+  it("Replace & Next: repeated Replace calls advance through and scroll to each remaining match", () => {
+    editor = new Editor({ extensions: makeTestExtensions(), content: paragraphDoc(["foo", "foo", "foo", "foo"]) });
+    query(editor, "foo");
+
+    for (let step = 0; step < 4; step++) {
+      focusSearchInput();
+      replaceCurrent(editor.view, "bar");
+
+      expect(focusTracker.calls).toContain(editor.view.dom);
+      expect(document.activeElement).toBe(searchInput);
+    }
+
+    expect(matches(editor)).toHaveLength(0);
+    expect(editor.state.doc.textContent).not.toContain("foo");
+  });
+
+  it("wraparound: replacing the last match wraps back to the first remaining match and scrolls to it", () => {
+    editor = new Editor({ extensions: makeTestExtensions(), content: paragraphDoc(["foo", "foo", "foo"]) });
+    query(editor, "foo");
+    navigateToMatch(editor.view, 2); // move to the last match
+    focusSearchInput();
+
+    replaceCurrent(editor.view, "bar");
+
+    const remaining = matches(editor);
+    expect(remaining).toHaveLength(2);
+    expect(currentIndex(editor)).toBe(0);
+    expect(editor.state.selection.from).toBe(remaining[0].from);
+    expect(focusTracker.calls).toContain(editor.view.dom);
+    expect(document.activeElement).toBe(searchInput);
+  });
+
+  it("long document: replacing a match scrolls the next remaining match (far below the fold) into view", () => {
+    const paragraphs = Array.from({ length: 500 }, (_, i) => {
+      if (i === 100 || i === 499) return "needle";
+      return `filler paragraph ${i}`;
+    });
+    editor = new Editor({ extensions: makeTestExtensions(), content: paragraphDoc(paragraphs) });
+    query(editor, "needle");
+    focusSearchInput();
+
+    replaceCurrent(editor.view, "found");
+
+    const remaining = matches(editor);
+    expect(remaining).toHaveLength(1);
+    expect(editor.state.selection.from).toBe(remaining[0].from);
+    expect(focusTracker.calls).toContain(editor.view.dom);
+    expect(document.activeElement).toBe(searchInput);
+  });
+
+  it("long tables: replacing a match inside a table scrolls the next remaining match into view", () => {
+    const rows = Array.from({ length: 200 }, (_, i) => {
+      if (i === 50 || i === 150) return "needle";
+      return `row ${i}`;
+    });
+    editor = new Editor({ extensions: makeTestExtensions(), content: tableDoc(rows) });
+    query(editor, "needle");
+    focusSearchInput();
+
+    replaceCurrent(editor.view, "found");
+
+    const remaining = matches(editor);
+    expect(remaining).toHaveLength(1);
+    expect(editor.state.selection.from).toBe(remaining[0].from);
+    expect(focusTracker.calls).toContain(editor.view.dom);
+    expect(document.activeElement).toBe(searchInput);
+  });
+
+  it("editor does not retain focus after Replace — it goes back to the search input", () => {
+    editor = new Editor({ extensions: makeTestExtensions(), content: paragraphDoc(["foo", "foo"]) });
+    query(editor, "foo");
+    focusSearchInput();
+
+    replaceCurrent(editor.view, "bar");
+
+    expect(document.activeElement).not.toBe(editor.view.dom);
+    expect(document.activeElement).toBe(searchInput);
+  });
+
+  it("Replace All: does not move focus into the editor or away from the search input", () => {
+    editor = new Editor({ extensions: makeTestExtensions(), content: paragraphDoc(["foo", "foo", "foo"]) });
+    query(editor, "foo");
+    focusSearchInput();
+
+    replaceAll(editor.view, "bar");
+
+    expect(matches(editor)).toHaveLength(0);
+    expect(editor.state.doc.textContent).not.toContain("foo");
+    expect(focusTracker.calls).not.toContain(editor.view.dom);
     expect(document.activeElement).toBe(searchInput);
   });
 });

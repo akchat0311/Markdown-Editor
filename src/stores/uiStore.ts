@@ -3,12 +3,20 @@ import { persist } from "zustand/middleware";
 
 export type Theme = "light" | "dark";
 
+/** Which pane is fully hidden in the split view, or "none" if both are visible. */
+export type SplitCollapsedPane = "none" | "editor" | "source";
+
 interface UIState {
   theme: Theme;
   sidebarOpen: boolean;
   sidebarWidth: number;
   rightPanelWidth: number;
   sourceMode: boolean;
+  /** Dockable split view: rich editor + source pane shown side by side. */
+  splitViewOpen: boolean;
+  /** Fixed pixel width of the source pane in split view; editor takes the rest. */
+  splitSourceWidth: number;
+  splitCollapsedPane: SplitCollapsedPane;
 }
 
 interface UIActions {
@@ -21,6 +29,16 @@ interface UIActions {
   adjustRightPanel(delta: number): void;
   setSourceMode(on: boolean): void;
   toggleSourceMode(): void;
+  setSplitViewOpen(open: boolean): void;
+  toggleSplitView(): void;
+  setSplitSourceWidth(width: number): void;
+  adjustSplitSourceWidth(delta: number): void;
+  /** Hides `pane`, leaving the other one at full width. */
+  collapseSplitPane(pane: "editor" | "source"): void;
+  /** Hides the pane OTHER than `pane`, so `pane` takes full width. */
+  maximizeSplitPane(pane: "editor" | "source"): void;
+  /** Brings both panes back after a collapse/maximize. */
+  restoreSplitView(): void;
 }
 
 export type UIStore = UIState & UIActions;
@@ -29,6 +47,8 @@ const MIN_SIDEBAR = 160;
 const MAX_SIDEBAR = 500;
 const MIN_RIGHT_PANEL = 260;
 const MAX_RIGHT_PANEL = 480;
+const MIN_SPLIT_SOURCE = 280;
+const MAX_SPLIT_SOURCE = 1000;
 
 export const useUIStore = create<UIStore>()(
   persist(
@@ -38,6 +58,9 @@ export const useUIStore = create<UIStore>()(
       sidebarWidth: 240,
       rightPanelWidth: 320,
       sourceMode: false,
+      splitViewOpen: false,
+      splitSourceWidth: 480,
+      splitCollapsedPane: "none",
 
       setTheme: (theme) => set({ theme }),
       toggleTheme: () =>
@@ -62,8 +85,42 @@ export const useUIStore = create<UIStore>()(
           ),
         })),
 
-      setSourceMode: (sourceMode) => set({ sourceMode }),
-      toggleSourceMode: () => set((s) => ({ sourceMode: !s.sourceMode })),
+      // sourceMode (full-source view) and splitViewOpen (dockable side-by-side
+      // view) are mutually exclusive — enabling one always turns the other off.
+      // This keeps App.tsx's existing sync guards (which key off sourceMode
+      // alone) fully valid unchanged: sourceMode's meaning ("the rich pane is
+      // hidden and the source textarea is the sole authoritative editor") never
+      // has to account for split view being open at the same time.
+      setSourceMode: (sourceMode) =>
+        set((s) => ({ sourceMode, splitViewOpen: sourceMode ? false : s.splitViewOpen })),
+      toggleSourceMode: () =>
+        set((s) => {
+          const next = !s.sourceMode;
+          return { sourceMode: next, splitViewOpen: next ? false : s.splitViewOpen };
+        }),
+
+      setSplitViewOpen: (open) =>
+        set((s) => ({ splitViewOpen: open, sourceMode: open ? false : s.sourceMode })),
+      toggleSplitView: () =>
+        set((s) => {
+          const next = !s.splitViewOpen;
+          return { splitViewOpen: next, sourceMode: next ? false : s.sourceMode };
+        }),
+
+      setSplitSourceWidth: (w) =>
+        set({ splitSourceWidth: Math.max(MIN_SPLIT_SOURCE, Math.min(MAX_SPLIT_SOURCE, w)) }),
+      adjustSplitSourceWidth: (delta) =>
+        set((s) => ({
+          splitSourceWidth: Math.max(
+            MIN_SPLIT_SOURCE,
+            Math.min(MAX_SPLIT_SOURCE, s.splitSourceWidth + delta)
+          ),
+        })),
+
+      collapseSplitPane: (pane) => set({ splitCollapsedPane: pane }),
+      maximizeSplitPane: (pane) =>
+        set({ splitCollapsedPane: pane === "editor" ? "source" : "editor" }),
+      restoreSplitView: () => set({ splitCollapsedPane: "none" }),
     }),
     {
       name: "md-editor-ui",
@@ -72,6 +129,12 @@ export const useUIStore = create<UIStore>()(
         sidebarOpen: s.sidebarOpen,
         sidebarWidth: s.sidebarWidth,
         rightPanelWidth: s.rightPanelWidth,
+        // Splitter position is the one piece of split-view state worth
+        // persisting — it's a sizing preference, like sidebarWidth/
+        // rightPanelWidth. Whether split view is currently open, and which
+        // pane (if any) is collapsed, are transient view-mode state — same
+        // treatment as sourceMode, which is deliberately NOT persisted either.
+        splitSourceWidth: s.splitSourceWidth,
       }),
     }
   )

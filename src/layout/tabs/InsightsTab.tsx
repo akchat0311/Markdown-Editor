@@ -495,7 +495,7 @@ export function InsightsTab({ onNavigateByTargetId }: InsightsTabProps) {
   const issues = useValidationStore((s) => s.issues);
   const editor = useContext(EditorContext);
   const requirementPattern = useConfigStore((s) => s.requirementPattern);
-  const index = useRequirementIndex(editor, requirementPattern?.example ?? null);
+  const index = useRequirementIndex(editor, requirementPattern);
 
   const total = issues.length;
   const errorCount = useMemo(() => issues.filter((i) => i.severity === "error").length, [issues]);

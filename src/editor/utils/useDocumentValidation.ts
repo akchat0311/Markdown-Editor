@@ -3,7 +3,8 @@ import { useEditorState } from "@tiptap/react";
 import type { Editor } from "@tiptap/react";
 import type { JSONContent } from "@tiptap/core";
 import { deriveOutline, flattenOutline } from "./deriveOutline";
-import { derivePattern, buildDetectionRegex, extractStatusText } from "./requirementOps";
+import { compileRequirementPattern, matchRequirementId, extractStatusText } from "./requirementOps";
+import type { RequirementPatternInput } from "./requirementOps";
 import { getNodeSectionRange } from "./outlineOps";
 import { extractBodyText } from "./extractBodyText";
 import { useStatusConfigStore } from "@/stores/statusConfigStore";
@@ -24,7 +25,7 @@ const DEBOUNCE_MS = 500;
  */
 export function useDocumentValidation(
   editor: Editor | null,
-  patternExample: string | null,
+  pattern: RequirementPatternInput,
 ): ValidationIssue[] {
   const [issues, setIssues] = useState<ValidationIssue[]>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -40,28 +41,28 @@ export function useDocumentValidation(
   const statuses = useStatusConfigStore((s) => s.statuses);
 
   useEffect(() => {
-    if (!editor || !patternExample) {
+    if (!editor || !pattern) {
       setIssues([]);
       return;
     }
 
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
-      const derived = derivePattern(patternExample);
-      if (!derived) { setIssues([]); return; }
+      const compiled = compileRequirementPattern(pattern);
+      if (!compiled) { setIssues([]); return; }
 
-      const regex = buildDetectionRegex(derived.prefix);
       const flat = flattenOutline(deriveOutline(editor));
       const docContent = editor.state.doc.content.toJSON() as JSONContent[];
 
       // Build the complete alias set recognised by the current status configuration.
-      // Each status entry contributes its full aliases array (case-sensitive strings).
+      // Each status entry contributes its full aliases array, exactly as configured;
+      // checkMissingStatus normalizes case/whitespace when comparing against this set.
       const validAliases = new Set(statuses.flatMap((s) => s.aliases));
 
       const requirements: RequirementRef[] = [];
       for (const node of flat) {
-        const m = node.label.match(regex);
-        if (!m) continue;
+        const matched = matchRequirementId(node.label, compiled);
+        if (!matched) continue;
 
         const [, to] = getNodeSectionRange(docContent, node.index, node.level ?? 1);
         const bodyText = docContent
@@ -71,8 +72,8 @@ export function useDocumentValidation(
           .trim();
 
         requirements.push({
-          id: derived.prefix + m[1],
-          num: parseInt(m[1], 10),
+          id: matched.id,
+          num: matched.num,
           statusText: extractStatusText(node.label),
           bodyText,
         });
@@ -86,7 +87,7 @@ export function useDocumentValidation(
     };
   // doc and statuses are the reactive triggers.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor, patternExample, doc, statuses]);
+  }, [editor, pattern, doc, statuses]);
 
   return issues;
 }

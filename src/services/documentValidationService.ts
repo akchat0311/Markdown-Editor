@@ -1,4 +1,5 @@
 import type { ValidationIssue } from "@/types/validation";
+import { normalizeStatusText } from "@/services/requirementStatusService";
 
 /**
  * Minimal per-requirement data needed by all validators.
@@ -7,8 +8,10 @@ import type { ValidationIssue } from "@/types/validation";
 export interface RequirementRef {
   /** Exact reconstructed ID, e.g. "REQ_003". */
   id: string;
-  /** Integer value of the numeric suffix. */
-  num: number;
+  /** Integer value of the numeric suffix. Null for regex-mode patterns whose
+   *  captured ID isn't purely numeric — such entries are skipped by the
+   *  order check (there's no meaningful numeric ordering for them). */
+  num: number | null;
   /** Raw text inside the trailing [bracket], or null when no bracket is present. */
   statusText: string | null;
   /** Trimmed plain-text content beneath the heading (the requirement body). */
@@ -24,6 +27,9 @@ export interface RequirementRef {
  *
  * When a violation is found the high-water mark is NOT advanced, so subsequent
  * out-of-order requirements still reference the correct "ceiling" ID.
+ *
+ * Entries with num === null (regex-mode IDs that aren't purely numeric) are
+ * skipped — there's no numeric ordering to violate.
  */
 export function checkRequirementOrder(
   requirements: ReadonlyArray<Pick<RequirementRef, "id" | "num">>,
@@ -34,6 +40,7 @@ export function checkRequirementOrder(
 
   for (let i = 0; i < requirements.length; i++) {
     const { id, num } = requirements[i];
+    if (num === null) continue;
     if (num < maxNum) {
       issues.push({
         id: `requirement-order-${i}-${id}`,
@@ -92,7 +99,10 @@ export function checkDuplicateIds(
  *
  * @param requirements  List of requirements with their raw bracket text.
  * @param validAliases  Complete set of recognised alias strings drawn from the
- *   status configuration (case-sensitive, matching resolveRequirementStatus).
+ *   status configuration, exactly as configured. Matching against `statusText`
+ *   is case- and whitespace-insensitive (via normalizeStatusText), matching
+ *   resolveRequirementStatus's behavior — but the aliases here are never
+ *   rewritten; only the comparison is normalized.
  *   When empty (statuses not yet loaded) only the bracket-presence check fires.
  */
 export function checkMissingStatus(
@@ -100,6 +110,9 @@ export function checkMissingStatus(
   validAliases: ReadonlySet<string> = new Set(),
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
+  const normalizedAliases = new Set(
+    Array.from(validAliases, (alias) => normalizeStatusText(alias))
+  );
 
   for (let i = 0; i < requirements.length; i++) {
     const { id, statusText } = requirements[i];
@@ -112,7 +125,7 @@ export function checkMissingStatus(
         message: `${id} does not have a status. Add a [Status] bracket.`,
         targetId: id,
       });
-    } else if (validAliases.size > 0 && !validAliases.has(statusText.trim())) {
+    } else if (normalizedAliases.size > 0 && !normalizedAliases.has(normalizeStatusText(statusText))) {
       issues.push({
         id: `missing-requirement-status-${i}-${id}`,
         severity: "warning",

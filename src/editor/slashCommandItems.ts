@@ -2,7 +2,7 @@ import type { Editor, Range } from "@tiptap/core";
 import type { JSONContent } from "@tiptap/core";
 import { useConfigStore } from "@/stores/configStore";
 import { deriveOutline, flattenOutline } from "@/editor/utils/deriveOutline";
-import { derivePattern, analyzeRequirements, nextAvailableId, insertRequirementAfter } from "@/editor/utils/requirementOps";
+import { compileRequirementPattern, analyzeRequirements, nextAvailableId, insertRequirementAfter } from "@/editor/utils/requirementOps";
 import { getSectionRange } from "@/editor/utils/outlineOps";
 
 export interface SlashCommandItem {
@@ -16,7 +16,10 @@ export interface SlashCommandItem {
 
 function makeRequirementSlashItem(): SlashCommandItem | null {
   const { requirementPattern } = useConfigStore.getState();
-  if (!requirementPattern) return null;
+  // Regex-mode patterns can match IDs but can't *generate* a new one (a
+  // regex describes matching, not construction), so this command — which
+  // needs to synthesize the next ID — is only offered in simple mode.
+  if (!compileRequirementPattern(requirementPattern)?.supportsNumbering) return null;
 
   return {
     id: "requirement",
@@ -26,12 +29,10 @@ function makeRequirementSlashItem(): SlashCommandItem | null {
     keywords: ["req", "requirement", "new req", "insert req"],
     command: (editor: Editor, range: Range) => {
       const { requirementPattern: pattern } = useConfigStore.getState();
-      if (!pattern) return;
+      const compiled = compileRequirementPattern(pattern);
+      if (!compiled || !compiled.supportsNumbering) return;
 
-      const derived = derivePattern(pattern.example);
-      if (!derived) return;
-
-      const { prefix, digits } = derived;
+      const { prefix, digits } = compiled;
 
       // Capture cursor position before deleting the slash text
       const cursorPos = range.from;
@@ -42,7 +43,7 @@ function makeRequirementSlashItem(): SlashCommandItem | null {
       // Re-read doc state after deletion
       const docContent = editor.state.doc.content.toJSON() as JSONContent[];
       const flat = flattenOutline(deriveOutline(editor));
-      const analysis = analyzeRequirements(flat, docContent, pattern.example);
+      const analysis = analyzeRequirements(flat, docContent, pattern);
       const existingReqs = analysis?.requirements ?? [];
       const newId = nextAvailableId(existingReqs, prefix, digits);
 

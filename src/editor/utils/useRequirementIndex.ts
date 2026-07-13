@@ -3,7 +3,7 @@ import { useEditorState } from "@tiptap/react";
 import type { Editor } from "@tiptap/react";
 import { deriveOutline, flattenOutline } from "./deriveOutline";
 import { buildRequirementIndex } from "./requirementOps";
-import type { RequirementIndex } from "./requirementOps";
+import type { RequirementIndex, RequirementPatternInput } from "./requirementOps";
 import { useStatusConfigStore } from "@/stores/statusConfigStore";
 
 const DEBOUNCE_MS = 300;
@@ -18,7 +18,7 @@ const DEBOUNCE_MS = 300;
  */
 export function useRequirementIndex(
   editor: Editor | null,
-  patternExample: string | null
+  pattern: RequirementPatternInput
 ): RequirementIndex | null {
   const [index, setIndex] = useState<RequirementIndex | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -36,7 +36,7 @@ export function useRequirementIndex(
   });
 
   useEffect(() => {
-    if (!editor || !patternExample) {
+    if (!editor || !pattern) {
       setIndex(null);
       return;
     }
@@ -44,7 +44,7 @@ export function useRequirementIndex(
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
       const flat = flattenOutline(deriveOutline(editor));
-      setIndex(buildRequirementIndex(flat, patternExample, statuses));
+      setIndex(buildRequirementIndex(flat, pattern, statuses));
     }, DEBOUNCE_MS);
 
     return () => {
@@ -52,7 +52,7 @@ export function useRequirementIndex(
     };
   // doc and statuses are the reactive triggers.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor, patternExample, doc, statuses]);
+  }, [editor, pattern, doc, statuses]);
 
   return index;
 }

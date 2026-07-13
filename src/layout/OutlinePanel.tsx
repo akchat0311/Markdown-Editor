@@ -32,12 +32,13 @@ import { serializeDocToMarkdown } from "@/markdown/serializer";
 import { useToastStore } from "@/stores/toastStore";
 import { TextSelection, type Transaction } from "@tiptap/pm/state";
 import {
-  derivePattern,
+  compileRequirementPattern,
+  validateRequirementRegex,
   analyzeRequirements,
   nextAvailableId,
   insertRequirementAfter,
   computeRenumberReplacements,
-  type DerivedPattern,
+  type CompiledPattern,
   type RequirementAnalysis,
 } from "@/editor/utils/requirementOps";
 import { rewriteHeadingId } from "@/editor/utils/requirementHeadingOps";
@@ -465,26 +466,57 @@ function TreeItem({
 
 // ── Pattern config panel ──────────────────────────────────────────────────────
 
+type PatternMode = "simple" | "regex";
+
 interface PatternConfigPanelProps {
+  mode: PatternMode;
+  onModeChange: (mode: PatternMode) => void;
   patternInput: string;
   onInputChange: (v: string) => void;
+  regexSource: string;
+  regexFlags: string;
+  onRegexSourceChange: (v: string) => void;
+  onRegexFlagsChange: (v: string) => void;
   onClear: () => void;
   hasExistingPattern: boolean;
 }
 
 function PatternConfigPanel({
+  mode,
+  onModeChange,
   patternInput,
   onInputChange,
+  regexSource,
+  regexFlags,
+  onRegexSourceChange,
+  onRegexFlagsChange,
   onClear,
   hasExistingPattern,
 }: PatternConfigPanelProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     inputRef.current?.focus();
-  }, []);
+  }, [mode]);
 
   const trimmed = patternInput.trim();
-  const derived: DerivedPattern | null = trimmed ? derivePattern(trimmed) : null;
+  const compiledSimple = trimmed ? compileRequirementPattern(trimmed) : null;
+
+  const trimmedSource = regexSource.trim();
+  const regexValidation = trimmedSource ? validateRequirementRegex(trimmedSource, regexFlags) : null;
+
+  const modeTab = (id: PatternMode, label: string) => (
+    <button
+      onClick={() => onModeChange(id)}
+      className={[
+        "flex-1 rounded px-2 py-1 text-[10px] font-medium transition-colors",
+        mode === id
+          ? "bg-[var(--color-accent)] text-white"
+          : "text-[var(--color-muted)] hover:bg-[var(--color-border)]",
+      ].join(" ")}
+    >
+      {label}
+    </button>
+  );
 
   return (
     <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-page-bg)] px-3 py-3">
@@ -492,37 +524,90 @@ function PatternConfigPanel({
         Requirement Pattern
       </p>
 
-      <input
-        ref={inputRef}
-        value={patternInput}
-        onChange={(e) => onInputChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") (e.target as HTMLInputElement).blur();
-        }}
-        placeholder="e.g. REQ_001"
-        className="w-full rounded border border-[var(--color-border)] bg-[var(--color-paper)] px-2 py-1 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
-        spellCheck={false}
-      />
-
-      <div className="mt-1 min-h-[1.1rem] text-[10px] leading-[1.1rem]">
-        {trimmed && derived && (
-          <span className="text-green-600 dark:text-green-400">
-            ✓ Prefix:&nbsp;
-            <span className="font-mono">{derived.prefix || "(none)"}</span>
-            &nbsp;· Digits:&nbsp;{derived.digits}
-          </span>
-        )}
-        {trimmed && !derived && (
-          <span className="text-amber-500">
-            ⚠ Example must end with a number
-          </span>
-        )}
+      <div className="mb-2 flex gap-1 rounded border border-[var(--color-border)] bg-[var(--color-paper)] p-0.5">
+        {modeTab("simple", "Simple")}
+        {modeTab("regex", "Regex")}
       </div>
 
-      <p className="mt-1.5 text-[10px] leading-relaxed text-[var(--color-muted)]">
-        Enter an example requirement ID. The editor will automatically detect
-        the numbering pattern.
-      </p>
+      {mode === "simple" ? (
+        <>
+          <input
+            ref={inputRef}
+            value={patternInput}
+            onChange={(e) => onInputChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") (e.target as HTMLInputElement).blur();
+            }}
+            placeholder="e.g. REQ_001"
+            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-paper)] px-2 py-1 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+            spellCheck={false}
+          />
+
+          <div className="mt-1 min-h-[1.1rem] text-[10px] leading-[1.1rem]">
+            {trimmed && compiledSimple && compiledSimple.mode === "simple" && (
+              <span className="text-green-600 dark:text-green-400">
+                ✓ Prefix:&nbsp;
+                <span className="font-mono">{compiledSimple.prefix || "(none)"}</span>
+                &nbsp;· Digits:&nbsp;{compiledSimple.digits}
+              </span>
+            )}
+            {trimmed && !compiledSimple && (
+              <span className="text-amber-500">
+                ⚠ Example must end with a number
+              </span>
+            )}
+          </div>
+
+          <p className="mt-1.5 text-[10px] leading-relaxed text-[var(--color-muted)]">
+            Enter an example requirement ID. The editor will automatically detect
+            the numbering pattern.
+          </p>
+        </>
+      ) : (
+        <>
+          <input
+            ref={inputRef}
+            value={regexSource}
+            onChange={(e) => onRegexSourceChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") (e.target as HTMLInputElement).blur();
+            }}
+            placeholder="e.g. ^REQ-(\d+)"
+            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-paper)] px-2 py-1 font-mono text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+            spellCheck={false}
+          />
+
+          <div className="mt-1.5 flex items-center gap-1.5">
+            <span className="text-[10px] text-[var(--color-muted)]">Flags</span>
+            <input
+              value={regexFlags}
+              onChange={(e) => onRegexFlagsChange(e.target.value)}
+              placeholder="i"
+              className="w-14 rounded border border-[var(--color-border)] bg-[var(--color-paper)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+              spellCheck={false}
+            />
+          </div>
+
+          <div className="mt-1 min-h-[1.1rem] text-[10px] leading-[1.1rem]">
+            {trimmedSource && regexValidation?.valid && (
+              <span className="text-green-600 dark:text-green-400">✓ Valid pattern</span>
+            )}
+            {trimmedSource && regexValidation && !regexValidation.valid && (
+              <span className="text-amber-500">⚠ {regexValidation.error}</span>
+            )}
+          </div>
+
+          <p className="mt-1.5 text-[10px] leading-relaxed text-[var(--color-muted)]">
+            Enter a regular expression matched against the start of each heading.
+            Include a capture group for the ID — a named group{" "}
+            <code className="rounded bg-[var(--color-border)] px-1">(?&lt;id&gt;…)</code>{" "}
+            is used when present, otherwise the first group. Invalid patterns are
+            never applied. Regex mode doesn't support generating new IDs (Insert
+            Requirement, Renumber), since a regex matches text — it doesn't define
+            how to construct one.
+          </p>
+        </>
+      )}
 
       {hasExistingPattern && (
         <button
@@ -544,8 +629,11 @@ interface IssueSummaryStripProps {
   issueListOpen: boolean;
   onToggle: () => void;
   onNavigate: (node: OutlineNode) => void;
-  onRenumber: () => void;
-  onReassignDuplicate: (id: string, nodes: OutlineNode[]) => void;
+  /** Undefined in regex mode: renumbering generates new IDs, which requires
+   *  a prefix + digit width that only simple-mode patterns have. */
+  onRenumber?: () => void;
+  /** Same restriction as onRenumber — reassignment also generates an ID. */
+  onReassignDuplicate?: (id: string, nodes: OutlineNode[]) => void;
 }
 
 function IssueSummaryStrip({
@@ -601,7 +689,7 @@ function IssueSummaryStrip({
           </svg>
         </button>
 
-        {(dupCount > 0 || missingCount > 0) && (
+        {onRenumber && (dupCount > 0 || missingCount > 0) && (
           <button
             onClick={onRenumber}
             title="Renumber all requirements sequentially"
@@ -635,13 +723,15 @@ function IssueSummaryStrip({
                       {nodes.length}×
                     </span>
                   </button>
-                  <button
-                    onClick={() => onReassignDuplicate(id, nodes)}
-                    title={`Reassign last occurrence of ${id} to next available ID`}
-                    className="shrink-0 rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium text-amber-600 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
-                  >
-                    Fix
-                  </button>
+                  {onReassignDuplicate && (
+                    <button
+                      onClick={() => onReassignDuplicate(id, nodes)}
+                      title={`Reassign last occurrence of ${id} to next available ID`}
+                      className="shrink-0 rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium text-amber-600 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
+                    >
+                      Fix
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -1065,11 +1155,20 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
   const [deleteNode, setDeleteNode] = useState<OutlineNode | null>(null);
 
   // ── Requirement pattern config ──────────────────────────────────────────────
-  const { requirementPattern, setRequirementPattern, clearRequirementPattern } =
+  const { requirementPattern, setRequirementPattern, setRequirementRegexPattern, clearRequirementPattern } =
     useConfigStore();
   const [patternOpen, setPatternOpen] = useState(false);
+  const [patternMode, setPatternMode] = useState<PatternMode>(
+    requirementPattern?.mode ?? "simple"
+  );
   const [patternInput, setPatternInput] = useState(
-    requirementPattern?.example ?? ""
+    requirementPattern?.mode === "simple" ? requirementPattern.example : ""
+  );
+  const [regexSourceInput, setRegexSourceInput] = useState(
+    requirementPattern?.mode === "regex" ? requirementPattern.source : ""
+  );
+  const [regexFlagsInput, setRegexFlagsInput] = useState(
+    requirementPattern?.mode === "regex" ? requirementPattern.flags : ""
   );
   const [issueListOpen, setIssueListOpen] = useState(false);
   const [renumberConfirmOpen, setRenumberConfirmOpen] = useState(false);
@@ -1123,16 +1222,15 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
   const isFiltering = searchState !== null;
 
   // ── Requirement analysis ────────────────────────────────────────────────────
-  const derivedPattern = useMemo(
-    () =>
-      requirementPattern ? derivePattern(requirementPattern.example) : null,
+  const compiledPattern: CompiledPattern | null = useMemo(
+    () => compileRequirementPattern(requirementPattern),
     [requirementPattern]
   );
 
   const analysis = useMemo((): RequirementAnalysis | null => {
     if (!editor || !requirementPattern) return null;
     const content: JSONContent[] = editor.getJSON().content ?? [];
-    return analyzeRequirements(flatOutline, content, requirementPattern.example);
+    return analyzeRequirements(flatOutline, content, requirementPattern);
   }, [editor, flatOutline, requirementPattern]);
 
   const requirementNodeKeys = useMemo(() => {
@@ -1691,6 +1789,14 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
   );
 
   // ── Pattern config ──────────────────────────────────────────────────────────
+  const handlePatternModeChange = useCallback(
+    (mode: PatternMode) => {
+      if (patternTimerRef.current) clearTimeout(patternTimerRef.current);
+      setPatternMode(mode);
+    },
+    []
+  );
+
   const handlePatternInputChange = useCallback(
     (value: string) => {
       setPatternInput(value);
@@ -1701,28 +1807,72 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
           () => clearRequirementPattern(),
           PATTERN_APPLY_MS
         );
-      } else if (derivePattern(trimmed)) {
+      } else if (compileRequirementPattern(trimmed)) {
         patternTimerRef.current = setTimeout(
           () => setRequirementPattern(trimmed),
           PATTERN_APPLY_MS
         );
       }
+      // Invalid non-empty input: leave the store untouched (matches simple
+      // mode's existing debounce-commit behavior — an invalid pattern is
+      // never persisted, so it's never used by extraction/validation).
     },
     [clearRequirementPattern, setRequirementPattern]
+  );
+
+  const handleRegexInputChange = useCallback(
+    (source: string, flags: string) => {
+      if (patternTimerRef.current) clearTimeout(patternTimerRef.current);
+      const trimmed = source.trim();
+      if (!trimmed) {
+        patternTimerRef.current = setTimeout(
+          () => clearRequirementPattern(),
+          PATTERN_APPLY_MS
+        );
+      } else if (validateRequirementRegex(trimmed, flags).valid) {
+        patternTimerRef.current = setTimeout(
+          () => setRequirementRegexPattern(trimmed, flags),
+          PATTERN_APPLY_MS
+        );
+      }
+      // Invalid regex: never committed to the store — the validator (and
+      // every other consumer) can never see an invalid pattern.
+    },
+    [clearRequirementPattern, setRequirementRegexPattern]
+  );
+
+  const handleRegexSourceChange = useCallback(
+    (value: string) => {
+      setRegexSourceInput(value);
+      handleRegexInputChange(value, regexFlagsInput);
+    },
+    [handleRegexInputChange, regexFlagsInput]
+  );
+
+  const handleRegexFlagsChange = useCallback(
+    (value: string) => {
+      setRegexFlagsInput(value);
+      handleRegexInputChange(regexSourceInput, value);
+    },
+    [handleRegexInputChange, regexSourceInput]
   );
 
   const handlePatternClear = useCallback(() => {
     if (patternTimerRef.current) clearTimeout(patternTimerRef.current);
     clearRequirementPattern();
     setPatternInput("");
+    setRegexSourceInput("");
+    setRegexFlagsInput("");
   }, [clearRequirementPattern]);
 
   // ── M4B: requirement mutation actions ──────────────────────────────────────
+  // Insert / Renumber / Reassign all generate new IDs, which only simple-mode
+  // patterns support (see CompiledPattern.supportsNumbering) — gated below.
 
   const handleInsertRequirement = useCallback(
     (node: OutlineNode) => {
-      if (!editor || !derivedPattern || !analysis || node.readonly) return;
-      const { prefix, digits } = derivedPattern;
+      if (!editor || !compiledPattern?.supportsNumbering || !analysis || node.readonly) return;
+      const { prefix, digits } = compiledPattern;
       const newId = nextAvailableId(analysis.requirements, prefix, digits);
       const content = getDocContent();
       const [, insertedAtIndex] = getNodeSectionRange(
@@ -1755,12 +1905,12 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
           .run();
       }
     },
-    [editor, derivedPattern, analysis, getDocContent, applyContentOp]
+    [editor, compiledPattern, analysis, getDocContent, applyContentOp]
   );
 
   const handleRenumber = useCallback(() => {
-    if (!editor || !derivedPattern || !analysis) return;
-    const { prefix, digits } = derivedPattern;
+    if (!editor || !compiledPattern?.supportsNumbering || !analysis) return;
+    const { prefix, digits } = compiledPattern;
     const replacements = computeRenumberReplacements(analysis.requirements, prefix, digits);
 
     const { state } = editor;
@@ -1786,12 +1936,12 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
     }
 
     setRenumberConfirmOpen(false);
-  }, [editor, derivedPattern, analysis]);
+  }, [editor, compiledPattern, analysis]);
 
   const handleReassignDuplicate = useCallback(
     (id: string, nodes: OutlineNode[]) => {
-      if (!editor || !derivedPattern || !analysis) return;
-      const { prefix, digits } = derivedPattern;
+      if (!editor || !compiledPattern?.supportsNumbering || !analysis) return;
+      const { prefix, digits } = compiledPattern;
       const target = nodes[nodes.length - 1]; // last occurrence by document order
       const newId = nextAvailableId(analysis.requirements, prefix, digits);
 
@@ -1805,7 +1955,7 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
       rewriteHeadingId(tr, target.pmPos, id, newId);
       editor.view.dispatch(tr);
     },
-    [editor, derivedPattern, analysis]
+    [editor, compiledPattern, analysis]
   );
 
   // ── Validation issues (ordering) ────────────────────────────────────────────
@@ -1904,8 +2054,14 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
         {/* ── Pattern config panel ── */}
         {patternOpen && (
           <PatternConfigPanel
+            mode={patternMode}
+            onModeChange={handlePatternModeChange}
             patternInput={patternInput}
             onInputChange={handlePatternInputChange}
+            regexSource={regexSourceInput}
+            regexFlags={regexFlagsInput}
+            onRegexSourceChange={handleRegexSourceChange}
+            onRegexFlagsChange={handleRegexFlagsChange}
             onClear={handlePatternClear}
             hasExistingPattern={requirementPattern !== null}
           />
@@ -1980,8 +2136,12 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
             issueListOpen={issueListOpen}
             onToggle={() => setIssueListOpen((o) => !o)}
             onNavigate={handleSelect}
-            onRenumber={() => setRenumberConfirmOpen(true)}
-            onReassignDuplicate={handleReassignDuplicate}
+            onRenumber={
+              compiledPattern?.supportsNumbering ? () => setRenumberConfirmOpen(true) : undefined
+            }
+            onReassignDuplicate={
+              compiledPattern?.supportsNumbering ? handleReassignDuplicate : undefined
+            }
           />
         )}
 
@@ -2049,7 +2209,7 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
           onRename={handleRename}
           onDuplicate={handleDuplicate}
           onInsertRequirement={
-            derivedPattern !== null ? handleInsertRequirement : undefined
+            compiledPattern?.supportsNumbering ? handleInsertRequirement : undefined
           }
           onDelete={handleDelete}
           onMoveUp={handleMoveUp}
@@ -2081,11 +2241,11 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
       )}
 
       {/* Renumber confirmation */}
-      {renumberConfirmOpen && derivedPattern && analysis && (
+      {renumberConfirmOpen && compiledPattern?.supportsNumbering && analysis && (
         <RenumberConfirmDialog
           reqCount={analysis.requirements.length}
-          prefix={derivedPattern.prefix}
-          digits={derivedPattern.digits}
+          prefix={compiledPattern.prefix}
+          digits={compiledPattern.digits}
           onConfirm={handleRenumber}
           onCancel={() => setRenumberConfirmOpen(false)}
         />
