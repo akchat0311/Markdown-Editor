@@ -27,7 +27,9 @@ import {
 } from "@/persistence/workspacePersistence";
 import { openReviewFile, writeToReviewHandle, saveReviewFileAs } from "@/persistence/reviewFilePersistence";
 import { openTraceabilityFile, writeToTraceabilityHandle, saveTraceabilityFileAs } from "@/persistence/traceabilityFilePersistence";
-import { saveWorkspace } from "@/persistence/workspaceSave";
+import { saveBundle } from "@/persistence/bundleSave";
+import { COMPANION_REGISTRY } from "@/persistence/companionArtifact";
+import type { CompanionArtifact } from "@/persistence/companionArtifact";
 import { deriveReviewFileName, findReviewFile, deriveTraceabilityFileName, findTraceabilityFile } from "@/persistence/documentBundleService";
 import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
 import { useTraceabilityStore } from "@/stores/traceabilityStore";
@@ -582,6 +584,18 @@ export default function App() {
         reviewStore.markSaved();
         useToastStore.getState().show("Review comments saved.", "success");
       } catch (e) {
+        if ((e as DOMException)?.name === "NotFoundError") {
+          // The file behind this handle was deleted, moved, or renamed
+          // outside the app since we captured it. Treat it like "no handle"
+          // and let the user re-pick a destination in one gesture (the
+          // existing Save As picker, pre-filled with the derived name)
+          // instead of leaving this store dirty forever behind a generic
+          // error toast with no discoverable recovery path.
+          console.warn("[handleSaveReview] review handle is stale, re-prompting", e);
+          useTabStore.getState().updateActiveTab({ reviewHandle: undefined });
+          await handleSaveReviewAs();
+          return;
+        }
         console.error("[handleSaveReview]", e);
         useToastStore.getState().show("Failed to save review comments.", "error");
       }
@@ -660,6 +674,16 @@ export default function App() {
         store.markSaved();
         useToastStore.getState().show("Traceability saved.", "success");
       } catch (e) {
+        if ((e as DOMException)?.name === "NotFoundError") {
+          // Same stale-handle recovery as handleSaveReview: the file was
+          // deleted/moved/renamed outside the app since we captured this
+          // handle. Re-prompt once via the existing Save As picker rather
+          // than leaving the store dirty behind a generic error toast.
+          console.warn("[handleSaveTraceability] traceability handle is stale, re-prompting", e);
+          useTabStore.getState().updateActiveTab({ traceabilityHandle: undefined });
+          await handleSaveTraceabilityAs();
+          return;
+        }
         console.error("[handleSaveTraceability]", e);
         useToastStore.getState().show("Failed to save traceability file.", "error");
       }
@@ -964,18 +988,28 @@ export default function App() {
     await flush();
   }, [handleSaveAs, flush]);
 
+  // Companion registry for the bundle save pipeline (Ctrl+S). Built FROM
+  // COMPANION_REGISTRY (companionArtifact.ts) — the single canonical list of
+  // "what companions exist" also used by useAnyCompanionDirty for the top
+  // bundle-dirty status — rather than a second, independently-maintained
+  // id/isLoaded/isDirty list that could drift out of sync with it. This
+  // function only attaches each id's save handler; a future companion needs
+  // one COMPANION_REGISTRY entry plus one line here, nothing else.
+  const bundleCompanions = useCallback((): CompanionArtifact[] => {
+    const saveHandlers: Record<string, () => Promise<void>> = {
+      review: handleSaveReview,
+      traceability: handleSaveTraceability,
+    };
+    return COMPANION_REGISTRY
+      .map((c) => ({ id: c.id, isLoaded: c.isLoaded, isDirty: c.isDirty, save: saveHandlers[c.id] }))
+      .filter((c): c is CompanionArtifact => Boolean(c.save));
+  }, [handleSaveReview, handleSaveTraceability]);
+
   const handleSaveWorkspace = useCallback(async () => {
     const tab = getActiveTab(useTabStore.getState());
     if (!tab) return;
-    const { loaded: reviewLoaded, isDirty: reviewDirty } = useReviewCommentsStore.getState();
-    await saveWorkspace(
-      tab.isDirty,
-      reviewLoaded,
-      reviewDirty,
-      handleSave,
-      handleSaveReview,
-    );
-  }, [handleSave, handleSaveReview]);
+    await saveBundle(handleSave, tab.isDirty, bundleCompanions());
+  }, [handleSave, bundleCompanions]);
 
   const handleOpenRecent = useCallback(async (recent: RecentFile) => {
     // Switch to existing open tab if already loaded
@@ -1370,7 +1404,12 @@ export default function App() {
           )}
         </div>
 
-        <StatusBar onSaveReview={handleSaveReview} onSaveReviewAs={handleSaveReviewAs} />
+        <StatusBar
+          onSaveReview={handleSaveReview}
+          onSaveReviewAs={handleSaveReviewAs}
+          onSaveTraceability={handleSaveTraceability}
+          onSaveTraceabilityAs={handleSaveTraceabilityAs}
+        />
       </div>
 
       {/* User name modal — opened via File → User Name… */}

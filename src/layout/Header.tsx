@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useUIStore, useTabStore, getActiveTab } from "@/stores";
 import { useUserSettingsStore } from "@/stores/userSettingsStore";
-import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
+import { useAnyCompanionDirty } from "@/persistence/useAnyCompanionDirty";
 import { getRecentFiles } from "@/persistence/recentFiles";
 import type { RecentFile } from "@/persistence/recentFiles";
 
@@ -230,9 +230,12 @@ export function Header({
   const tabState = useTabStore();
   const activeTab = getActiveTab(tabState);
   const setTabTitle = useTabStore((s) => s.setTabTitle);
-  const reviewLoaded = useReviewCommentsStore((s) => s.loaded);
-  const reviewDirty = useReviewCommentsStore((s) => s.isDirty);
-  const workspaceDirty = (activeTab?.isDirty ?? false) || (reviewLoaded && reviewDirty);
+  // True bundle-dirty state: markdown OR any loaded companion artifact
+  // (review, traceability, future ones) is dirty. Sourced from
+  // COMPANION_REGISTRY, not a hardcoded per-companion OR-chain — see
+  // useAnyCompanionDirty's doc comment for why that matters.
+  const anyCompanionDirty = useAnyCompanionDirty();
+  const workspaceDirty = (activeTab?.isDirty ?? false) || anyCompanionDirty;
 
   // Close export dropdown on outside click
   useEffect(() => {
