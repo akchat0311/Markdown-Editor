@@ -73,8 +73,7 @@ describe("resolveRequirementStatus", () => {
     expect(resolveRequirementStatus("",         DEFAULT_STATUSES)).toBe("unknown");
   });
 
-  it("does not do case-folding — aliases are exact", () => {
-    // "approved" is an alias, but "Approve" is not
+  it("does not fuzzy-match a different word — 'Approve' is not a case/whitespace variant of 'approved'", () => {
     expect(resolveRequirementStatus("Approve", DEFAULT_STATUSES)).toBe("unknown");
   });
 
@@ -165,6 +164,25 @@ describe("buildRequirementIndex — status resolution", () => {
     expect(idx!.requirements[0].status).toBe("proposed");
     expect(idx!.requirements[1].status).toBe("implemented");
     expect(idx!.requirements[2].status).toBe("unknown");
+  });
+
+  // Regression: extraction must resolve case/whitespace variants of a status
+  // heading bracket even when the alias list only has ONE canonical entry
+  // (not every possible case form explicitly enumerated).
+  it("resolves case- and whitespace-variant bracket text against a single canonical alias", () => {
+    const readyOnly: RequirementStatus[] = [
+      { id: "ready", label: "Ready for review", order: 1, aliases: ["Ready for review"] },
+    ];
+    const flat = [
+      makeNode("REQ_001 [Ready For Review]", 2),
+      makeNode("REQ_002 [READY FOR REVIEW]", 2),
+      makeNode("REQ_003 [ready For   Review]", 2),
+    ];
+    const idx = buildRequirementIndex(flat, "REQ_001", readyOnly);
+    expect(idx!.requirements.map((r) => r.status)).toEqual(["ready", "ready", "ready"]);
+    // Canonical alias/label is never rewritten by resolution.
+    expect(readyOnly[0].label).toBe("Ready for review");
+    expect(readyOnly[0].aliases).toEqual(["Ready for review"]);
   });
 });
 

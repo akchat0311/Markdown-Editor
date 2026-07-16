@@ -188,7 +188,7 @@ export function OverviewTab({ onSwitchTab }: OverviewTabProps) {
   const issues = useValidationStore((s) => s.issues);
   const commentDetails = useCommentDetails();
 
-  const index = useRequirementIndex(editor, requirementPattern?.example ?? null);
+  const index = useRequirementIndex(editor, requirementPattern);
 
   const doc = useEditorState({
     editor,

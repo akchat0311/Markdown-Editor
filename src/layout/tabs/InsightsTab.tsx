@@ -38,7 +38,7 @@ const CATEGORY_LABELS: Record<ValidationCategory, string> = {
 
 // ── Data shapes ───────────────────────────────────────────────────────────────
 
-interface ReqInfo { id: string; message: string }
+interface ReqInfo { id: string; message: string; navigable: boolean }
 
 interface RuleGroup {
   ruleId: string;
@@ -95,11 +95,22 @@ function buildRuleGroups(issues: ValidationIssue[]): RuleGroup[] {
     const seen = new Set<string>();
     const requirements: ReqInfo[] = [];
     for (const issue of ruleIssues) {
-      if (issue.targetId && !seen.has(issue.targetId)) {
+      if (issue.targetId) {
+        if (seen.has(issue.targetId)) continue;
         seen.add(issue.targetId);
         requirements.push({
           id: issue.targetId,
           message: trimIdPrefix(issue.message, issue.targetId),
+          navigable: true,
+        });
+      } else if (issue.documentIndex !== undefined) {
+        // Each document-level issue (keyed by its own id) gets a separate "Document" row.
+        if (seen.has(issue.id)) continue;
+        seen.add(issue.id);
+        requirements.push({
+          id: "Document",
+          message: issue.message,
+          navigable: false,
         });
       }
     }
@@ -310,6 +321,21 @@ function StatCard({ icon, iconBg, value, label, testid }: StatCardProps) {
 // ── Requirement row (inside expanded rule) ────────────────────────────────────
 
 function RequirementRow({ req, onNavigate }: { req: ReqInfo; onNavigate: (id: string) => void }) {
+  if (!req.navigable) {
+    return (
+      <div
+        data-testid="req-row"
+        className="flex w-full items-start gap-3 px-5 py-3 text-left"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="font-mono text-xs font-semibold text-[var(--color-text)]">{req.id}</div>
+          {req.message && (
+            <div className="mt-0.5 truncate text-xs text-[var(--color-muted)]">{req.message}</div>
+          )}
+        </div>
+      </div>
+    );
+  }
   return (
     <button
       data-testid="req-row"
@@ -363,7 +389,7 @@ function RuleRow({
           )}
         </div>
         <span className={`mt-0.5 shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ${badgeCls}`}>
-          {count}&nbsp;{count === 1 ? "requirement" : "requirements"}
+          {count}&nbsp;{count === 1 ? "issue" : "issues"}
         </span>
         {expanded
           ? <IconChevronDown className="mt-1 h-4 w-4 shrink-0 text-[var(--color-muted)]" />
@@ -469,7 +495,7 @@ export function InsightsTab({ onNavigateByTargetId }: InsightsTabProps) {
   const issues = useValidationStore((s) => s.issues);
   const editor = useContext(EditorContext);
   const requirementPattern = useConfigStore((s) => s.requirementPattern);
-  const index = useRequirementIndex(editor, requirementPattern?.example ?? null);
+  const index = useRequirementIndex(editor, requirementPattern);
 
   const total = issues.length;
   const errorCount = useMemo(() => issues.filter((i) => i.severity === "error").length, [issues]);

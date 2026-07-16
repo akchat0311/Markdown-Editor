@@ -38,7 +38,7 @@ export function EditorView({ initialContent, onChange, editable = true }: Editor
   if (!editor) return null;
 
   return (
-    <div className="mx-auto w-full max-w-[900px] py-10">
+    <div className="w-full py-8">
       <EditorToolbar editor={editor} />
       <div className="doc-page">
         <EditorContent editor={editor} />

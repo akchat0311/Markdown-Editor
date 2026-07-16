@@ -63,6 +63,9 @@ function renderDashboard(
     onLoadReview: () => void;
     onSaveReview: () => void;
     onSaveReviewAs: () => void;
+    onLoadTraceability: () => void;
+    onSaveTraceability: () => void;
+    onSaveTraceabilityAs: () => void;
   }> = {},
 ) {
   return render(
@@ -71,6 +74,9 @@ function renderDashboard(
       onLoadReview={props.onLoadReview ?? vi.fn()}
       onSaveReview={props.onSaveReview ?? vi.fn()}
       onSaveReviewAs={props.onSaveReviewAs ?? vi.fn()}
+      onLoadTraceability={props.onLoadTraceability ?? vi.fn()}
+      onSaveTraceability={props.onSaveTraceability ?? vi.fn()}
+      onSaveTraceabilityAs={props.onSaveTraceabilityAs ?? vi.fn()}
     />,
   );
 }
@@ -96,11 +102,12 @@ describe("Dashboard — visibility", () => {
 describe("Dashboard — tab bar", () => {
   beforeEach(resetStores);
 
-  it("renders all four tabs", () => {
+  it("renders all five tabs", () => {
     renderDashboard();
     expect(screen.getByTestId("tab-overview")).toBeInTheDocument();
     expect(screen.getByTestId("tab-requirements")).toBeInTheDocument();
     expect(screen.getByTestId("tab-reviews")).toBeInTheDocument();
+    expect(screen.getByTestId("tab-traceability")).toBeInTheDocument();
     expect(screen.getByTestId("tab-quality")).toBeInTheDocument();
   });
 
@@ -119,6 +126,12 @@ describe("Dashboard — tab bar", () => {
     renderDashboard();
     fireEvent.click(screen.getByTestId("tab-reviews"));
     expect(screen.getByTestId("reviews-tab")).toBeInTheDocument();
+  });
+
+  it("switches to Traceability tab on click", () => {
+    renderDashboard();
+    fireEvent.click(screen.getByTestId("tab-traceability"));
+    expect(screen.getByTestId("traceability-tab")).toBeInTheDocument();
   });
 
   it("switches to Quality tab on click", () => {
@@ -176,6 +189,39 @@ describe("Dashboard — Quality tab", () => {
     // Rules default to collapsed; expand the first rule to reveal requirement rows
     fireEvent.click(screen.getAllByTestId("rule-toggle")[0]);
     expect(screen.getAllByTestId("req-row")).toHaveLength(3);
+  });
+
+  it("3 distinct document-level issues each render as a separate non-clickable row", () => {
+    useValidationStore.setState({
+      issues: [
+        makeIssue({ id: "ua-1", type: "undefined-acronym", targetId: undefined, documentIndex: 0, severity: "warning", message: "'ECU' appears to be an undefined acronym." }),
+        makeIssue({ id: "ua-2", type: "undefined-acronym", targetId: undefined, documentIndex: 1, severity: "warning", message: "'CAN' appears to be an undefined acronym." }),
+        makeIssue({ id: "ua-3", type: "undefined-acronym", targetId: undefined, documentIndex: 2, severity: "warning", message: "'ABS' appears to be an undefined acronym." }),
+      ],
+    });
+    goToInsights();
+    fireEvent.click(screen.getAllByTestId("rule-toggle")[0]);
+    const rows = screen.getAllByTestId("req-row");
+    expect(rows).toHaveLength(3);
+    // All document rows are non-navigable divs, not buttons
+    rows.forEach((row) => expect(row.tagName).toBe("DIV"));
+  });
+
+  it("mixed requirement and document issues render separate rows of each type", () => {
+    useValidationStore.setState({
+      issues: [
+        makeIssue({ id: "ua-req", type: "undefined-acronym", targetId: "REQ_001", documentIndex: 1, severity: "warning", message: "REQ_001: 'ECU' appears to be an undefined acronym." }),
+        makeIssue({ id: "ua-doc", type: "undefined-acronym", targetId: undefined, documentIndex: 0, severity: "warning", message: "'CAN' appears to be an undefined acronym." }),
+      ],
+    });
+    goToInsights();
+    fireEvent.click(screen.getAllByTestId("rule-toggle")[0]);
+    const rows = screen.getAllByTestId("req-row");
+    expect(rows).toHaveLength(2);
+    const buttonRows = rows.filter((r) => r.tagName === "BUTTON");
+    const divRows = rows.filter((r) => r.tagName === "DIV");
+    expect(buttonRows).toHaveLength(1); // requirement row is navigable (button)
+    expect(divRows).toHaveLength(1);    // document row is non-navigable (div)
   });
 });
 

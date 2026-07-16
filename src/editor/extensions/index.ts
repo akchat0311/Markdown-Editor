@@ -14,9 +14,10 @@ import { MathMark } from "./MathMark";
 import { Highlight } from "./Highlight";
 import { Superscript } from "./Superscript";
 import { Subscript } from "./Subscript";
-import { TableAlignment } from "./TableAlignment";
+import { TableColumnAlign } from "./TableColumnAlign";
 import { RequirementStatus } from "./RequirementStatus";
 import { ReviewCommentBadge } from "./ReviewCommentBadge";
+import { TraceabilityBadge } from "./TraceabilityBadge";
 import { RequirementIdMigration } from "./RequirementIdMigration";
 import { LinkNavigation } from "./LinkNavigation";
 import { LinkDefinition } from "./LinkDefinition";
@@ -58,8 +59,8 @@ export function createEditorExtensions(): Extensions {
     Highlight,
     Superscript,
     Subscript,
-    TableKit.configure({ table: { resizable: true } }),
-    TableAlignment,
+    TableKit.configure({ table: { resizable: false } }),
+    TableColumnAlign,
     SpreadTaskList,
     SpreadTaskItem.configure({ nested: true }),
     WorkspaceImage.configure({ inline: false }),
@@ -75,6 +76,7 @@ export function createEditorExtensions(): Extensions {
     FindReplaceExtension,
     RequirementStatus,
     ReviewCommentBadge,
+    TraceabilityBadge,
     RequirementIdMigration,
     LinkNavigation,
     LinkDefinition,

@@ -7,7 +7,8 @@ import { useConfigStore } from "@/stores/configStore";
 import { useStatusConfigStore } from "@/stores/statusConfigStore";
 import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
 import { getRequirementStatuses, resolveRequirementStatus } from "@/services/requirementStatusService";
-import { derivePattern, buildDetectionRegex } from "@/editor/utils/requirementOps";
+import { compileRequirementPattern, matchRequirementId } from "@/editor/utils/requirementOps";
+import type { CompiledPattern } from "@/editor/utils/requirementOps";
 import { rewriteHeadingStatus, insertHeadingStatus } from "@/editor/utils/requirementHeadingOps";
 import type { RequirementStatus } from "@/types/requirementStatus";
 import type { ReviewComment } from "@/types/reviewComment";
@@ -295,15 +296,13 @@ function autoInsertDraftStatus(view: EditorView): void {
   const { requirementPattern } = useConfigStore.getState();
   if (!requirementPattern) return;
 
-  const derived = derivePattern(requirementPattern.example);
-  if (!derived) return;
+  const compiled = compileRequirementPattern(requirementPattern);
+  if (!compiled) return;
 
   const statuses = getRequirementStatuses();
   if (statuses.length === 0) return;
 
   const draftStatus = statuses.find((s) => s.id === "draft") ?? statuses[0];
-  const { prefix } = derived;
-  const regex = buildDetectionRegex(prefix);
   const { state } = view;
   const { from: selFrom, to: selTo } = state.selection;
 
@@ -311,7 +310,7 @@ function autoInsertDraftStatus(view: EditorView): void {
 
   const checkHeading = (node: import("@tiptap/pm/model").Node, offset: number) => {
     if (node.type.name !== "heading") return;
-    const range = findStatusRange(node, offset, regex, statuses, prefix);
+    const range = findStatusRange(node, offset, compiled, statuses);
     if (!range || range.bracketTo !== null) return; // already has a bracket
     // Don't auto-insert while cursor is inside this heading.
     const headingFrom = offset + 1;
@@ -343,15 +342,14 @@ function autoInsertDraftStatus(view: EditorView): void {
 function findStatusRange(
   headingNode: PMNode,
   nodePos: number,
-  regex: RegExp,
+  compiled: CompiledPattern,
   statuses: RequirementStatus[],
-  prefix: string,
 ): StatusRange | null {
   const text = headingNode.textContent;
-  if (!regex.test(text)) return null;
+  const matched = matchRequirementId(text, compiled);
+  if (!matched) return null;
 
-  const idMatch = text.match(regex);
-  const reqId = idMatch ? prefix + idMatch[1] : "";
+  const reqId = matched.id;
 
   // Find the last `[...]` bracket group at end of heading text.
   const bracketMatch = text.match(/(\[[^\]]+\])\s*$/);
@@ -376,20 +374,19 @@ function buildDecorations(state: EditorState): DecorationSet {
   const { requirementPattern } = useConfigStore.getState();
   if (!requirementPattern) return DecorationSet.empty;
 
-  const derived = derivePattern(requirementPattern.example);
-  if (!derived) return DecorationSet.empty;
+  const compiledOrNull = compileRequirementPattern(requirementPattern);
+  if (!compiledOrNull) return DecorationSet.empty;
+  const compiled: CompiledPattern = compiledOrNull;
 
   const statuses = getRequirementStatuses();
   if (statuses.length === 0) return DecorationSet.empty;
 
-  const { prefix } = derived;
-  const regex = buildDetectionRegex(prefix);
   const { from: selFrom, to: selTo } = state.selection;
   const decorations: Decoration[] = [];
 
   // Process a heading node at the given absolute PM position.
   function processHeading(node: import("@tiptap/pm/model").Node, nodePos: number) {
-    const range = findStatusRange(node, nodePos, regex, statuses, prefix);
+    const range = findStatusRange(node, nodePos, compiled, statuses);
     if (!range) return;
 
     const { bracketFrom, bracketTo } = range;
@@ -478,10 +475,12 @@ export const requirementStatusPlugin = new Plugin<DecorationSet>({
       if (state.loaded && !prevLoaded) { prevLoaded = true; refresh(); }
     });
 
-    // Rebuild when requirementPattern changes.
-    let prevPattern = useConfigStore.getState().requirementPattern?.example;
+    // Rebuild when requirementPattern changes. The store replaces the whole
+    // pattern object on every set/clear call, so reference inequality is a
+    // reliable (and mode-agnostic) "did it change" check.
+    let prevPattern = useConfigStore.getState().requirementPattern;
     const unsubscribeConfig = useConfigStore.subscribe((state) => {
-      const next = state.requirementPattern?.example;
+      const next = state.requirementPattern;
       if (next !== prevPattern) { prevPattern = next; refresh(); }
     });
 

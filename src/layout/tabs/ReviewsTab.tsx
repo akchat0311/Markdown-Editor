@@ -166,7 +166,7 @@ export function ReviewsTab({ onNavigate, onLoadReview, onSaveReview, onSaveRevie
   const reviewHandle = useTabStore((s) => getActiveTab(s)?.reviewHandle ?? null);
   const reviewFileName = reviewHandle?.name;
 
-  const index = useRequirementIndex(editor, requirementPattern?.example ?? null);
+  const index = useRequirementIndex(editor, requirementPattern);
 
   const [reqStatusFilter, setReqStatusFilter] = useState("all");
   const [commentStatusFilter, setCommentStatusFilter] = useState("all");
@@ -238,7 +238,7 @@ export function ReviewsTab({ onNavigate, onLoadReview, onSaveReview, onSaveRevie
       flat,
       docContent,
       documentName,
-      requirementPattern?.example ?? null,
+      requirementPattern,
       statuses,
       reviewComments,
     );

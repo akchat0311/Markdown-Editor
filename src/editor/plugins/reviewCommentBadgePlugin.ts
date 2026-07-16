@@ -6,7 +6,7 @@ import { useConfigStore } from "@/stores/configStore";
 import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
 import { useCommentDrawerStore } from "@/stores/commentDrawerStore";
 import { getRequirementStatuses, resolveRequirementStatus } from "@/services/requirementStatusService";
-import { derivePattern, buildDetectionRegex } from "@/editor/utils/requirementOps";
+import { compileRequirementPattern, matchRequirementId } from "@/editor/utils/requirementOps";
 import { extractSectionNumber, sectionReviewId } from "@/editor/utils/sectionReviewOps";
 import type { ReviewComment } from "@/types/reviewComment";
 
@@ -108,16 +108,8 @@ function buildDecorations(editorState: EditorState): DecorationSet {
   const statuses = getRequirementStatuses();
   const decorations: Decoration[] = [];
 
-  // Pre-derive requirement pattern so processHeading can check it in one pass.
-  let reqRegex: RegExp | null = null;
-  let reqPrefix = "";
-  if (requirementPattern) {
-    const derived = derivePattern(requirementPattern.example);
-    if (derived) {
-      reqPrefix = derived.prefix;
-      reqRegex = buildDetectionRegex(reqPrefix);
-    }
-  }
+  // Pre-compile requirement pattern so processHeading can check it in one pass.
+  const compiled = requirementPattern ? compileRequirementPattern(requirementPattern) : null;
 
   // Single traversal: each heading tries requirement badge first, then section badge.
   // This guarantees decorations are emitted in document order.
@@ -125,10 +117,10 @@ function buildDecorations(editorState: EditorState): DecorationSet {
     const text = node.textContent;
 
     // ── Requirement badge (takes priority over section badge) ─────────────────
-    if (reqRegex) {
-      const idMatch = text.match(reqRegex);
-      if (idMatch) {
-        const reqId = reqPrefix + idMatch[1];
+    if (compiled) {
+      const matched = matchRequirementId(text, compiled);
+      if (matched) {
+        const reqId = matched.id;
         const bracketMatch = text.match(/(\[[^\]]+\])\s*$/);
         const rawStatus = bracketMatch ? bracketMatch[1].slice(1, -1).trim() : "";
         const statusId = rawStatus
@@ -231,10 +223,12 @@ export const reviewCommentBadgePlugin = new Plugin<DecorationSet>({
       }
     });
 
-    // Rebuild when requirement pattern changes.
-    let prevPattern = useConfigStore.getState().requirementPattern?.example;
+    // Rebuild when requirement pattern changes. The store replaces the whole
+    // pattern object on every set/clear call, so reference inequality is a
+    // reliable (and mode-agnostic) "did it change" check.
+    let prevPattern = useConfigStore.getState().requirementPattern;
     const unsubscribeConfig = useConfigStore.subscribe((s) => {
-      const next = s.requirementPattern?.example;
+      const next = s.requirementPattern;
       if (next !== prevPattern) {
         prevPattern = next;
         refresh();

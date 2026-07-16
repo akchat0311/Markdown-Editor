@@ -1,6 +1,7 @@
 import type { JSONContent } from "@tiptap/core";
 import type { OutlineNode } from "@/types/outline";
 import type { RequirementStatus } from "@/types/requirementStatus";
+import type { RequirementPattern } from "@/stores/configStore";
 import { getNodeSectionRange, getSectionRange, renameHeading } from "@/editor/utils/outlineOps";
 import { resolveRequirementStatus } from "@/services/requirementStatusService";
 
@@ -62,14 +63,243 @@ export function buildDetectionRegex(prefix: string): RegExp {
   return new RegExp("^" + escapeRegex(prefix) + "(\\d+)");
 }
 
+// ── Compiled pattern (simple OR regex mode) ────────────────────────────────────
+//
+// Every consumer (extraction, navigation, validation, outline) goes through
+// compileRequirementPattern() + matchRequirementId() instead of deriving a
+// regex by hand. This is what lets regex mode slot in everywhere simple mode
+// already worked, and is also where the "compile once, reuse it" performance
+// requirement is satisfied: the compiled RegExp is cached and only rebuilt
+// when the underlying pattern config actually changes (see below).
+
+// Discriminated union (on both `mode` and `supportsNumbering`) so that
+// narrowing on either field gives TypeScript-checked access to prefix/digits
+// — callers don't need non-null assertions after checking supportsNumbering.
+export type CompiledPattern =
+  | {
+      mode: "simple";
+      /** Always anchored to match at the start of the heading label (index 0). */
+      regex: RegExp;
+      prefix: string;
+      digits: number;
+      supportsNumbering: true;
+    }
+  | {
+      mode: "regex";
+      regex: RegExp;
+      prefix: null;
+      digits: null;
+      /**
+       * Regex mode has no way to *generate* a new ID (a regex describes
+       * matching, not construction), so ID-generating mutations — Insert
+       * Requirement, Renumber, Reassign Duplicate, and the "/requirement"
+       * slash command — are unavailable in regex mode. Callers must check
+       * this before invoking nextAvailableId / renumberRequirements /
+       * insertRequirementAfter / computeRenumberReplacements.
+       */
+      supportsNumbering: false;
+    };
+
+/**
+ * Accepted anywhere a requirement pattern is needed. A plain string is
+ * treated as a simple-mode example (this is the pre-regex-mode calling
+ * convention and remains fully supported for backward compatibility — every
+ * existing call site and persisted document keeps working unchanged).
+ */
+export type RequirementPatternInput = RequirementPattern | string | null | undefined;
+
+function normalizePatternInput(input: RequirementPatternInput): RequirementPattern | null {
+  if (input == null) return null;
+  if (typeof input === "string") return input ? { mode: "simple", example: input } : null;
+  return input;
+}
+
+/**
+ * Counts the capturing groups in a regex source, including named groups
+ * (which also occupy a positional slot). Standard technique: append an
+ * empty alternative so the regex always matches, then read how many
+ * elements `.exec("")` returns beyond the full-match slot.
+ */
+function countCapturingGroups(source: string, flags: string): number {
+  const probe = new RegExp(source + "|", flags.replace(/[gy]/g, ""));
+  const m = probe.exec("");
+  return m ? m.length - 1 : 0;
+}
+
+function sanitizeFlags(flags: string): string {
+  // 'g'/'y' make the RegExp stateful (lastIndex) across repeated exec() calls
+  // on different strings, which every call site here does in a loop over
+  // headings. Stripping them keeps matching stateless and correct.
+  return flags.replace(/[gy]/g, "");
+}
+
+export interface RegexValidationResult {
+  valid: boolean;
+  error: string | null;
+}
+
+/**
+ * Validates a user-supplied regex-mode pattern. An invalid pattern must
+ * never reach compileRequirementPattern()/be used by the validator — this
+ * is the single gate both the settings UI and the store should check before
+ * committing a regex pattern.
+ *
+ * Requirements for validity:
+ *   1. Non-empty source.
+ *   2. Compiles as a RegExp (no syntax errors).
+ *   3. Has at least one capturing group — this is what supplies the
+ *      requirement ID. A named group called `id` is preferred when present;
+ *      otherwise the first capturing group is used. A pattern with no
+ *      capture group at all is rejected outright rather than silently
+ *      falling back to the whole match, so authors get an explicit error
+ *      instead of surprising extraction results.
+ */
+export function validateRequirementRegex(source: string, flags: string = ""): RegexValidationResult {
+  const trimmed = source.trim();
+  if (!trimmed) return { valid: false, error: "Pattern cannot be empty." };
+
+  let groupCount: number;
+  try {
+    // eslint-disable-next-line no-new -- constructed only to surface a SyntaxError
+    new RegExp(trimmed, sanitizeFlags(flags));
+    groupCount = countCapturingGroups(trimmed, flags);
+  } catch (e) {
+    return { valid: false, error: e instanceof Error ? e.message : "Invalid regular expression." };
+  }
+
+  if (groupCount === 0) {
+    return {
+      valid: false,
+      error: "Pattern must include a capture group for the requirement ID, e.g. (\\d+) or (?<id>...).",
+    };
+  }
+
+  return { valid: true, error: null };
+}
+
+interface CompiledCacheEntry {
+  key: string;
+  compiled: CompiledPattern | null;
+}
+
+// Single-slot cache: in practice exactly one requirement pattern is active
+// app-wide at a time (it's global config, see configStore.ts), so a single
+// last-compiled slot gives an effectively 100% hit rate between pattern
+// changes — which is exactly the hot path, since this is invoked on every
+// ProseMirror transaction across three plugins. Recompiling only happens
+// when the pattern itself changes, not on every heading scan.
+let compiledCache: CompiledCacheEntry | null = null;
+
+function patternCacheKey(pattern: RequirementPattern): string {
+  return pattern.mode === "regex"
+    ? `regex:${pattern.flags}:${pattern.source}`
+    : `simple:${pattern.example}`;
+}
+
+function compilePatternUncached(pattern: RequirementPattern): CompiledPattern | null {
+  if (pattern.mode === "simple") {
+    const derived = derivePattern(pattern.example);
+    if (!derived) return null;
+    return {
+      mode: "simple",
+      regex: buildDetectionRegex(derived.prefix),
+      prefix: derived.prefix,
+      digits: derived.digits,
+      supportsNumbering: true,
+    };
+  }
+
+  const validation = validateRequirementRegex(pattern.source, pattern.flags);
+  if (!validation.valid) return null;
+
+  let regex: RegExp;
+  try {
+    regex = new RegExp(pattern.source.trim(), sanitizeFlags(pattern.flags));
+  } catch {
+    return null;
+  }
+
+  return { mode: "regex", regex, prefix: null, digits: null, supportsNumbering: false };
+}
+
+/**
+ * Compiles a requirement pattern (simple example or regex) into a reusable
+ * CompiledPattern, or null when the pattern is unconfigured or invalid.
+ * An invalid regex (fails validateRequirementRegex) always compiles to null
+ * here — this is the single choke point that guarantees invalid patterns
+ * are never used by extraction, navigation, validation, or the outline.
+ *
+ * Cached: repeated calls with an equal pattern reuse the same compiled
+ * RegExp instance instead of rebuilding it (see compiledCache above).
+ */
+export function compileRequirementPattern(input: RequirementPatternInput): CompiledPattern | null {
+  const pattern = normalizePatternInput(input);
+  if (!pattern) return null;
+
+  const key = patternCacheKey(pattern);
+  if (compiledCache && compiledCache.key === key) return compiledCache.compiled;
+
+  const compiled = compilePatternUncached(pattern);
+  compiledCache = { key, compiled };
+  return compiled;
+}
+
+/** Human-readable summary for UI display, independent of mode. */
+export function describeRequirementPattern(pattern: RequirementPattern | null): string {
+  if (!pattern) return "";
+  return pattern.mode === "simple" ? pattern.example : `/${pattern.source}/${pattern.flags}`;
+}
+
+export interface MatchedRequirement {
+  /** Exact ID string: simple mode reconstructs prefix + digits; regex mode
+   *  uses the named `id` group (or first capture group) verbatim. */
+  id: string;
+  /** Length of the full match (group 0) — use this, not id.length, to slice
+   *  off the ID portion of a heading label (regex mode's capture group does
+   *  not necessarily start at, or span, the whole match). */
+  matchLength: number;
+  /** Parsed integer when `id` is purely numeric, else null. Simple mode is
+   *  always non-null (buildDetectionRegex's capture group is `(\d+)` by
+   *  construction). Regex mode is null whenever the captured ID isn't a bare
+   *  digit string — gap detection and renumbering are skipped in that case
+   *  (see analyzeRequirements' `missing` field and CompiledPattern.supportsNumbering). */
+  num: number | null;
+}
+
+/**
+ * Matches a heading label against a compiled pattern. Matches must start at
+ * the beginning of the label (mirrors simple mode's implicit `^` anchor) —
+ * a regex-mode pattern that matches mid-string is not considered a
+ * requirement heading.
+ */
+export function matchRequirementId(label: string, compiled: CompiledPattern): MatchedRequirement | null {
+  const m = compiled.regex.exec(label);
+  if (!m || m.index !== 0) return null;
+
+  if (compiled.mode === "simple") {
+    const digits = m[1]; // guaranteed present: buildDetectionRegex always captures (\d+)
+    return {
+      id: (compiled.prefix ?? "") + digits,
+      matchLength: m[0].length,
+      num: parseInt(digits, 10),
+    };
+  }
+
+  const id = String(m.groups?.id ?? m[1] ?? m[0]);
+  const num = /^\d+$/.test(id) ? parseInt(id, 10) : null;
+  return { id, matchLength: m[0].length, num };
+}
+
 // ── Analysis output types ─────────────────────────────────────────────────────
 
 export interface RequirementEntry {
   node: OutlineNode;
-  /** Exact reconstructed ID string: prefix + captured digits, e.g. "TRANS_TOS_001". */
+  /** Exact ID string (see MatchedRequirement.id). */
   id: string;
-  /** Integer value of the numeric suffix, e.g. 1. */
-  num: number;
+  /** Integer value of the numeric suffix (see MatchedRequirement.num). Always
+   *  non-null for simple-mode patterns; may be null for regex-mode patterns
+   *  whose captured ID isn't purely numeric. */
+  num: number | null;
 }
 
 export interface RequirementAnalysis {
@@ -96,35 +326,30 @@ export interface RequirementAnalysis {
 // ── Core analysis ─────────────────────────────────────────────────────────────
 
 /**
- * Analyses the flat outline against the given requirement pattern example.
- * Returns null when the example string is not a valid pattern (no trailing digits).
+ * Analyses the flat outline against the given requirement pattern (simple
+ * example string, or a simple/regex RequirementPattern config). Returns null
+ * when the pattern is unconfigured or invalid — an invalid regex pattern is
+ * never used here (see compileRequirementPattern).
  *
  * @param flatOutline  Document-order flat list from flattenOutline().
  * @param docContent   editor.getJSON().content — needed for section range computation.
- * @param patternExample  The user's example string, e.g. "TRANS_TOS_001".
+ * @param pattern      A plain example string (simple mode, e.g. "TRANS_TOS_001")
+ *                     or a full RequirementPattern (simple or regex mode).
  */
 export function analyzeRequirements(
   flatOutline: OutlineNode[],
   docContent: JSONContent[],
-  patternExample: string
+  pattern: RequirementPatternInput
 ): RequirementAnalysis | null {
-  const derived = derivePattern(patternExample);
-  if (!derived) return null;
+  const compiled = compileRequirementPattern(pattern);
+  if (!compiled) return null;
 
-  const { prefix, digits } = derived;
-  const regex = buildDetectionRegex(prefix);
-
-  // ── Detect requirement headings ──────────────────────────────────────────
+  // ── Detect requirement headings — single O(n) pass over the outline ──────
   const requirements: RequirementEntry[] = [];
   for (const node of flatOutline) {
-    const match = node.label.match(regex);
-    if (!match) continue;
-    const captured = match[1]; // digits as they appear in the heading
-    requirements.push({
-      node,
-      id: prefix + captured, // exact reconstructed ID string
-      num: parseInt(captured, 10),
-    });
+    const matched = matchRequirementId(node.label, compiled);
+    if (!matched) continue;
+    requirements.push({ node, id: matched.id, num: matched.num });
   }
 
   // ── Duplicate detection (exact id string) ────────────────────────────────
@@ -140,15 +365,24 @@ export function analyzeRequirements(
   }
 
   // ── Missing ID detection (numeric gaps within existing range) ────────────
+  // Only meaningful in simple mode: it needs a prefix + digit width to
+  // reconstruct the missing IDs' formatted strings, and a total order over
+  // every requirement's numeric suffix. Regex mode IDs are not guaranteed to
+  // be sequential integers (or even numeric at all), so this is skipped
+  // entirely for regex-mode patterns — documented behavior, not an oversight.
   const missing: string[] = [];
-  if (requirements.length >= 2) {
-    const nums = requirements.map((r) => r.num);
-    const min = Math.min(...nums);
-    const max = Math.max(...nums);
-    const present = new Set(nums);
-    for (let n = min + 1; n < max; n++) {
-      if (!present.has(n)) {
-        missing.push(formatId(n, prefix, digits));
+  if (compiled.supportsNumbering && requirements.length >= 2) {
+    const nums = requirements.map((r) => r.num).filter((n): n is number => n !== null);
+    if (nums.length === requirements.length) {
+      const prefix = compiled.prefix ?? "";
+      const digits = compiled.digits ?? 0;
+      const min = Math.min(...nums);
+      const max = Math.max(...nums);
+      const present = new Set(nums);
+      for (let n = min + 1; n < max; n++) {
+        if (!present.has(n)) {
+          missing.push(formatId(n, prefix, digits));
+        }
       }
     }
   }
@@ -213,24 +447,28 @@ export function extractStatusText(label: string): string | null {
  * level) is used as the section name.
  *
  * @param statuses  Loaded from statusConfigStore — alias resolution table.
- * Returns null when patternExample is not a valid pattern.
+ * @param pattern   A plain example string (simple mode) or a full
+ *                  RequirementPattern (simple or regex mode).
+ * Returns null when the pattern is unconfigured or invalid.
  */
 export function buildRequirementIndex(
   flatOutline: OutlineNode[],
-  patternExample: string,
+  pattern: RequirementPatternInput,
   statuses: RequirementStatus[]
 ): RequirementIndex | null {
-  const derived = derivePattern(patternExample);
-  if (!derived) return null;
+  const compiled = compileRequirementPattern(pattern);
+  if (!compiled) return null;
 
-  const { prefix } = derived;
-  const regex = buildDetectionRegex(prefix);
-
-  // First pass: determine which nodes are requirements (by key) so we can skip
-  // them when building the section stack.
+  // First pass: match every node once, both flagging requirements (by key)
+  // and caching the match so the second pass doesn't re-run the regex.
   const reqKeySet = new Set<string>();
+  const matchByKey = new Map<string, MatchedRequirement>();
   for (const node of flatOutline) {
-    if (regex.test(node.label)) reqKeySet.add(node.key);
+    const matched = matchRequirementId(node.label, compiled);
+    if (matched) {
+      reqKeySet.add(node.key);
+      matchByKey.set(node.key, matched);
+    }
   }
 
   // Second pass: single walk to resolve section + build records.
@@ -256,16 +494,19 @@ export function buildRequirementIndex(
       const section = nearestLevel !== null ? sectionByLevel[nearestLevel] : "—";
 
       const rawLabel = node.label;
-      const idMatch = rawLabel.match(regex);
-      const id = idMatch ? prefix + idMatch[1] : rawLabel;
+      const matched = matchByKey.get(node.key)!;
+      const { id, matchLength } = matched;
 
       const rawStatusText = extractStatusText(rawLabel);
       const status = rawStatusText
         ? resolveRequirementStatus(rawStatusText, statuses)
         : "unknown";
 
-      // Derive title: strip "ID " prefix and optional " [Status]" suffix from the label.
-      const titleRaw = rawLabel.slice(id.length).replace(/\s*\[[^\]]*\]\s*$/, "").trim();
+      // Derive title: strip the matched ID portion and optional " [Status]"
+      // suffix from the label. Uses matchLength (full match), not id.length,
+      // since regex mode's capture group may be shorter than the full match
+      // (e.g. a literal prefix outside the capturing group).
+      const titleRaw = rawLabel.slice(matchLength).replace(/\s*\[[^\]]*\]\s*$/, "").trim();
 
       requirements.push({ id, status, section, pmPos: node.pmPos, title: titleRaw });
     }
@@ -326,15 +567,18 @@ export function computeRenumberReplacements(
 
 /**
  * Returns the next available requirement ID: max(existing nums) + 1, formatted.
- * Returns formatId(1, ...) when requirements is empty.
+ * Returns formatId(1, ...) when requirements is empty (or none have a numeric
+ * id — this helper is only meaningful for simple-mode patterns, where every
+ * entry's num is guaranteed non-null; see CompiledPattern.supportsNumbering).
  */
 export function nextAvailableId(
   requirements: RequirementEntry[],
   prefix: string,
   digits: number
 ): string {
-  if (requirements.length === 0) return formatId(1, prefix, digits);
-  const max = Math.max(...requirements.map((r) => r.num));
+  const nums = requirements.map((r) => r.num).filter((n): n is number => n !== null);
+  if (nums.length === 0) return formatId(1, prefix, digits);
+  const max = Math.max(...nums);
   return formatId(max + 1, prefix, digits);
 }
 

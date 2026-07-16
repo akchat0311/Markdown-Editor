@@ -35,12 +35,10 @@ body {
 /* A4-like document page */
 .doc-page {
   width: 100%;
-  max-width: 816px; /* ~8.5in at 96dpi */
   min-height: 1056px; /* ~11in at 96dpi */
-  margin: 0 auto;
   background-color: var(--color-paper);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 8px 24px rgba(0, 0, 0, 0.06);
-  padding: 72px 88px;
+  padding: 40px 56px;
   border-radius: 2px;
 }
 
@@ -233,6 +231,18 @@ body {
 
 .dark .math-inline-widget:hover {
   background-color: rgba(91, 141, 239, 0.12);
+}
+
+/* Wide KaTeX scrolls within its widget rather than overflowing the cell.
+   max-width:100% on this inline-block resolves against the <p> inside <td>,
+   which has a definite block width even in table-layout:fixed — confirmed in
+   both Chromium and headless WebKit.  overflow-y:hidden suppresses the implicit
+   vertical scrollbar CSS forces when overflow-x is non-visible. */
+.ProseMirror td .math-inline-widget,
+.ProseMirror th .math-inline-widget {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 /* Loading placeholder (KaTeX not yet ready) */
@@ -482,6 +492,22 @@ body {
   background-color: rgba(255, 255, 255, 0.04);
 }
 
+.ProseMirror .tableWrapper {
+  overflow-x: auto;
+}
+
+.ProseMirror .selectedCell::after {
+  z-index: 2;
+  position: absolute;
+  content: "";
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(200, 200, 255, 0.4);
+  pointer-events: none;
+}
+
 .ProseMirror img {
   max-width: 100%;
   border-radius: 4px;
@@ -686,3 +712,105 @@ body {
   outline: 2px solid var(--color-accent);
   outline-offset: 1px;
 }
+
+/* ── Traceability badge (inline, after the review badge) ─────────────────── */
+
+.req-trace-badge-wrap {
+  position: relative;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.req-trace-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 0.45em;
+  padding: 2px 6px;
+  border-radius: 9999px;
+  font-size: 0.67em;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  vertical-align: middle;
+  border: none;
+  white-space: nowrap;
+  background: rgba(13, 148, 136, 0.10);
+  color: #0d9488;
+  transition: background-color 0.12s, color 0.12s, border-color 0.12s;
+}
+.req-trace-badge:hover { background: rgba(13, 148, 136, 0.18); }
+.dark .req-trace-badge { color: #2dd4bf; background: rgba(13, 148, 136, 0.14); }
+
+/* Dashed outline when no test cases are linked — mirrors the empty review badge */
+.req-trace-badge--empty {
+  background: transparent;
+  color: var(--color-muted);
+  border: 1px dashed var(--color-border);
+}
+.req-trace-badge--empty:hover {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+  background: rgba(37, 99, 235, 0.05);
+}
+.dark .req-trace-badge--empty:hover { background: rgba(91, 141, 239, 0.07); }
+
+.req-trace-badge:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+/* Hover tooltip: linked test case IDs + titles */
+.req-trace-tooltip {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 40;
+  margin-top: 4px;
+  min-width: 200px;
+  max-width: 320px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-paper);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+  cursor: default;
+}
+.req-trace-badge-wrap:hover .req-trace-tooltip,
+.req-trace-badge:focus-visible + .req-trace-tooltip {
+  display: block;
+}
+
+.req-trace-tooltip-header {
+  margin-bottom: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.req-trace-tooltip-row {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+  border-top: 1px solid var(--color-border);
+}
+.req-trace-tooltip-header + .req-trace-tooltip-row { border-top: none; }
+
+.req-trace-tooltip-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.req-trace-tooltip-title { color: var(--color-muted); }
+
+.req-trace-tooltip-empty { color: var(--color-muted); }

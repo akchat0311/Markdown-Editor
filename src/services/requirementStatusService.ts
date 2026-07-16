@@ -60,18 +60,38 @@ export function getRequirementStatuses(): RequirementStatus[] {
 }
 
 /**
- * Resolves a raw status text extracted from a heading (e.g. "Draft", "APPROVED")
- * against the configured aliases.
+ * Normalizes status text for case/whitespace-insensitive comparison: trim,
+ * collapse consecutive whitespace to a single space, then lowercase
+ * (locale-aware). This is the single shared helper for comparing a parsed
+ * status string against configured statuses — it must never be used for
+ * display or persistence, which always use the canonical configured
+ * label/alias exactly as configured (see resolveRequirementStatus below,
+ * which returns status.id — the caller maps that back to status.label for
+ * display, so the configured capitalization is never lost or rewritten).
+ */
+export function normalizeStatusText(text: string): string {
+  return text.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+}
+
+/**
+ * Resolves a raw status text extracted from a heading (e.g. "Draft", "APPROVED",
+ * "ready  for   review") against the configured aliases.
  *
- * Returns the canonical `status.id`, or `"unknown"` if no alias matches.
+ * Matching is case-insensitive and whitespace-insensitive (via
+ * normalizeStatusText) — "Ready For Review", "READY FOR REVIEW", and
+ * "ready   for review" all resolve to the same configured status. Storage
+ * and display are unaffected: this function only returns the canonical
+ * `status.id`, or `"unknown"` if no alias matches.
  */
 export function resolveRequirementStatus(
   rawText: string,
   statuses: RequirementStatus[]
 ): string {
-  const trimmed = rawText.trim();
+  const normalized = normalizeStatusText(rawText);
   for (const status of statuses) {
-    if (status.aliases.includes(trimmed)) return status.id;
+    if (status.aliases.some((alias) => normalizeStatusText(alias) === normalized)) {
+      return status.id;
+    }
   }
   return "unknown";
 }

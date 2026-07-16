@@ -112,6 +112,35 @@ describe("checkRequirementOrder — violations", () => {
   });
 });
 
+// checkRequirementOrder with num === null: this is what regex-mode requirements
+// look like when their captured ID isn't purely numeric (e.g. "PROJ-A17").
+// There's no numeric ordering to violate for those entries, so they're skipped
+// rather than crashing or comparing against `null`.
+describe("checkRequirementOrder — regex-mode entries with num: null", () => {
+  function reqNullNum(id: string): RequirementRef {
+    return { id, num: null, statusText: "Draft", bodyText: "Body." };
+  }
+
+  it("skips entries with num === null entirely — no issues, no crash", () => {
+    expect(checkRequirementOrder([reqNullNum("PROJ-A1"), reqNullNum("PROJ-B2")])).toHaveLength(0);
+  });
+
+  it("does not let a null entry reset or interfere with the numeric high-water mark", () => {
+    const issues = checkRequirementOrder([
+      req("REQ_010", 10), reqNullNum("PROJ-X"), req("REQ_002", 2),
+    ]);
+    expect(issues).toHaveLength(1);
+    expect(issues[0].targetId).toBe("REQ_002");
+    expect(issues[0].message).toContain("REQ_010");
+  });
+
+  it("a null entry between two ascending numeric entries reports no violation", () => {
+    expect(checkRequirementOrder([
+      req("REQ_001", 1), reqNullNum("PROJ-X"), req("REQ_002", 2),
+    ])).toHaveLength(0);
+  });
+});
+
 // ── checkDuplicateIds ─────────────────────────────────────────────────────────
 
 describe("checkDuplicateIds — no violations", () => {
@@ -254,15 +283,66 @@ describe("checkMissingStatus — violations", () => {
     expect(issues[1].targetId).toBe("REQ_002");
   });
 
-  it("alias matching is case-sensitive (matches resolveRequirementStatus behaviour)", () => {
-    const aliases = new Set(["Draft", "draft"]);
-    expect(checkMissingStatus([{ id: "REQ_001", statusText: "DRAFT" }], aliases)).toHaveLength(1);
+  it("alias matching is case-insensitive (matches resolveRequirementStatus behaviour)", () => {
+    const aliases = new Set(["Draft"]);
+    // "DRAFT" is not literally in the alias set, but normalizes to the same
+    // text as the configured "Draft" alias, so it must not be flagged.
+    expect(checkMissingStatus([{ id: "REQ_001", statusText: "DRAFT" }], aliases)).toHaveLength(0);
     expect(checkMissingStatus([{ id: "REQ_001", statusText: "Draft" }], aliases)).toHaveLength(0);
+    expect(checkMissingStatus([{ id: "REQ_001", statusText: "draft" }], aliases)).toHaveLength(0);
   });
 
   it("trims whitespace from statusText before alias comparison", () => {
     const aliases = new Set(["Draft"]);
     expect(checkMissingStatus([{ id: "REQ_001", statusText: " Draft " }], aliases)).toHaveLength(0);
+  });
+
+  // ── Case & whitespace normalization regression ──────────────────────────────
+  // The configured alias is "Ready for review" (mirrors the real
+  // requirement-statuses.json / FALLBACK_STATUSES entry). Every case variant
+  // and whitespace irregularity below must resolve without a violation, and
+  // the alias itself must never be rewritten in the process.
+  describe("case and whitespace insensitivity regression", () => {
+    const READY_ALIASES = new Set(["Ready for review"]);
+
+    it.each([
+      "Ready For Review",
+      "READY FOR REVIEW",
+      "Ready for review",
+      "ready For Review",
+      "ready for review",
+    ])("does not flag %j as an unrecognized status", (variant) => {
+      expect(checkMissingStatus([{ id: "REQ_001", statusText: variant }], READY_ALIASES)).toHaveLength(0);
+    });
+
+    it("does not flag leading/trailing whitespace variants", () => {
+      expect(
+        checkMissingStatus([{ id: "REQ_001", statusText: "  Ready for review  " }], READY_ALIASES)
+      ).toHaveLength(0);
+      expect(
+        checkMissingStatus([{ id: "REQ_001", statusText: "\tREADY FOR REVIEW\n" }], READY_ALIASES)
+      ).toHaveLength(0);
+    });
+
+    it("does not flag multiple internal spaces", () => {
+      expect(
+        checkMissingStatus([{ id: "REQ_001", statusText: "Ready   for    review" }], READY_ALIASES)
+      ).toHaveLength(0);
+      expect(
+        checkMissingStatus([{ id: "REQ_001", statusText: "READY  FOR   REVIEW" }], READY_ALIASES)
+      ).toHaveLength(0);
+    });
+
+    it("still flags genuinely unrecognized status text", () => {
+      expect(
+        checkMissingStatus([{ id: "REQ_001", statusText: "Obsolete" }], READY_ALIASES)
+      ).toHaveLength(1);
+    });
+
+    it("does not mutate the configured alias set", () => {
+      checkMissingStatus([{ id: "REQ_001", statusText: "READY FOR REVIEW" }], READY_ALIASES);
+      expect(READY_ALIASES).toEqual(new Set(["Ready for review"]));
+    });
   });
 
   it("all issues have unique IDs within one run", () => {

@@ -14,6 +14,9 @@ export interface TabData {
   fileHandle?: FileSystemFileHandle;
   /** Handle for the companion .review.json file — set after first Save Review As. */
   reviewHandle?: FileSystemFileHandle;
+  /** Handle for the companion .test-traceability.json file — set on bundle
+   *  discovery, manual load, or first Save As. */
+  traceabilityHandle?: FileSystemFileHandle;
   /** True for template/sample documents — never dirty, never saved to disk. */
   isReadOnly?: boolean;
 }

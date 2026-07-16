@@ -39,7 +39,24 @@ export const SpreadListItem = ListItem.extend({
   addAttributes() {
     // `value` stores the original ordered-list marker number (e.g. 1 for "1.", 4 for "4.").
     // Null means the item was created via the editor and uses sequential fallback numbering.
-    return { ...this.parent?.(), spread: { default: false }, value: { default: null } };
+    //
+    // The only legitimate writer of `value` is the markdown parser (parser.ts,
+    // attachOrderedListItemValues/listNodeToPM), which sets it directly on the PM
+    // JSON tree when loading a .md file. It must NEVER be trusted from parsed DOM:
+    // TipTap's default attribute config would otherwise read it from any `<li value>`
+    // fed through the `li` parse rule (paste, drag-drop) and — because attributes
+    // default to `keepOnSplit: true` — clone a pasted value onto every subsequent
+    // item created by pressing Enter, corrupting both the display and the saved
+    // markdown (serializer.ts trusts `node.value` unconditionally). Clipboard-sourced
+    // `<li value>`/`<ol start>` is presentation metadata from the source document,
+    // not persistent state for this one — closing off `parseHTML` and disabling
+    // `keepOnSplit` makes pasted/typed numbering derive purely from list position,
+    // per HTML's native <ol>/<li> counting.
+    return {
+      ...this.parent?.(),
+      spread: { default: false },
+      value: { default: null, keepOnSplit: false, parseHTML: () => null },
+    };
   },
 });
 

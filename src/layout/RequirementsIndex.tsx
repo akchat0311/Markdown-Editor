@@ -9,6 +9,7 @@ import { useRequirementIndex } from "@/editor/utils/useRequirementIndex";
 import { CommentDrawer } from "@/layout/CommentDrawer";
 import { deriveOutline, flattenOutline } from "@/editor/utils/deriveOutline";
 import { collectReviewExportRows, generateReviewCsv, downloadReviewCsv } from "@/services/reviewExportService";
+import { describeRequirementPattern } from "@/editor/utils/requirementOps";
 import type { RequirementRecord } from "@/editor/utils/requirementOps";
 import type { RequirementStatus } from "@/types/requirementStatus";
 import type { ReviewComment } from "@/types/reviewComment";
@@ -176,7 +177,7 @@ export function RequirementsIndex({
   const reviewIsDirty = useReviewCommentsStore((s) => s.isDirty);
   const reviewComments = useReviewCommentsStore((s) => s.comments);
 
-  const index = useRequirementIndex(editor, requirementPattern?.example ?? null);
+  const index = useRequirementIndex(editor, requirementPattern);
 
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -267,7 +268,7 @@ export function RequirementsIndex({
       flat,
       docContent,
       documentName,
-      requirementPattern?.example ?? null,
+      requirementPattern,
       statuses,
       reviewComments,
     );
@@ -514,7 +515,7 @@ export function RequirementsIndex({
                         <p className="text-xs">
                           Requirements matching pattern{" "}
                           <code className="rounded bg-[var(--color-border)] px-1">
-                            {requirementPattern.example}
+                            {describeRequirementPattern(requirementPattern)}
                           </code>{" "}
                           will appear here.
                         </p>

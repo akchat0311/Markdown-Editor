@@ -74,36 +74,6 @@ function IconAlignRight() {
   );
 }
 
-function IconAlignTop() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
-      <line x1="1" y1="1" x2="13" y2="1" />
-      <rect x="3" y="3" width="3" height="8" rx="0.5" />
-      <rect x="8" y="3" width="3" height="5" rx="0.5" />
-    </svg>
-  );
-}
-
-function IconAlignMiddle() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
-      <line x1="1" y1="7" x2="13" y2="7" />
-      <rect x="3" y="2" width="3" height="10" rx="0.5" />
-      <rect x="8" y="3.5" width="3" height="7" rx="0.5" />
-    </svg>
-  );
-}
-
-function IconAlignBottom() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
-      <line x1="1" y1="13" x2="13" y2="13" />
-      <rect x="3" y="3" width="3" height="8" rx="0.5" />
-      <rect x="8" y="6" width="3" height="5" rx="0.5" />
-    </svg>
-  );
-}
-
 // ── Table action icons ────────────────────────────────────────────────────────
 
 function IconRowAbove() {
@@ -168,6 +138,16 @@ function IconDeleteCol() {
   );
 }
 
+function IconDeleteTable() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1" y="1" width="12" height="12" rx="1" />
+      <line x1="4" y1="4" x2="10" y2="10" />
+      <line x1="10" y1="4" x2="4" y2="10" />
+    </svg>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function EditorToolbar({ editor }: { editor: Editor }) {
@@ -184,6 +164,8 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
       highlight: e.isActive("highlight"),
       superscript: e.isActive("superscript"),
       subscript: e.isActive("subscript"),
+      // Inline math
+      inlineMath: e.isActive("inlineMath"),
       // Table context
       inTable: e.isActive("table"),
       canAddRowBefore: e.can().addRowBefore(),
@@ -192,9 +174,9 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
       canAddColAfter: e.can().addColumnAfter(),
       canDeleteRow: e.can().deleteRow(),
       canDeleteCol: e.can().deleteColumn(),
-      // Cell alignment (reads from whichever cell type is active)
+      canDeleteTable: e.can().deleteTable(),
+      // Column alignment (reads from whichever cell type is active)
       cellAlign: e.getAttributes("tableCell").align ?? e.getAttributes("tableHeader").align ?? null,
-      cellVerticalAlign: e.getAttributes("tableCell").verticalAlign ?? e.getAttributes("tableHeader").verticalAlign ?? null,
     }),
   });
 
@@ -215,8 +197,7 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
       className="flex items-center gap-0.5 rounded-md border border-[var(--color-border)] bg-[var(--color-paper)] p-1 shadow-lg"
       options={{ placement: "top", offset: 8 }}
       shouldShow={({ editor: e, from, to }) =>
-        // Show for text selections OR whenever cursor is inside a table
-        from !== to || e.isActive("table")
+        from !== to || e.isActive("table") || e.isActive("inlineMath")
       }
     >
       {/* ── Text formatting ── */}
@@ -283,57 +264,47 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
         x<sub style={{ fontSize: "0.65em" }}>₂</sub>
       </ToolbarButton>
 
+      {/* ── Remove math (visible only when cursor is inside an inline math range) ── */}
+      {state.inlineMath && (
+        <>
+          <Divider />
+          <ToolbarButton
+            label="Remove math"
+            onClick={() =>
+              editor.chain().focus().extendMarkRange("inlineMath").unsetMark("inlineMath").run()
+            }
+          >
+            <span className="font-mono line-through" style={{ fontSize: "0.75em" }}>$</span>
+          </ToolbarButton>
+        </>
+      )}
+
       {/* ── Table controls (visible only when cursor is in a table) ── */}
       {state.inTable && (
         <>
           <Divider />
 
-          {/* Horizontal alignment */}
+          {/* Column alignment — applies to the entire column (GFM is column-level) */}
           <ToolbarButton
             label="Align Left"
             active={state.cellAlign === "left"}
-            onClick={() => editor.chain().focus().setCellAttribute("align", state.cellAlign === "left" ? null : "left").run()}
+            onClick={() => editor.chain().focus().setColumnAlign(state.cellAlign === "left" ? null : "left").run()}
           >
             <IconAlignLeft />
           </ToolbarButton>
           <ToolbarButton
             label="Align Center"
             active={state.cellAlign === "center"}
-            onClick={() => editor.chain().focus().setCellAttribute("align", state.cellAlign === "center" ? null : "center").run()}
+            onClick={() => editor.chain().focus().setColumnAlign(state.cellAlign === "center" ? null : "center").run()}
           >
             <IconAlignCenter />
           </ToolbarButton>
           <ToolbarButton
             label="Align Right"
             active={state.cellAlign === "right"}
-            onClick={() => editor.chain().focus().setCellAttribute("align", state.cellAlign === "right" ? null : "right").run()}
+            onClick={() => editor.chain().focus().setColumnAlign(state.cellAlign === "right" ? null : "right").run()}
           >
             <IconAlignRight />
-          </ToolbarButton>
-
-          <Divider />
-
-          {/* Vertical alignment */}
-          <ToolbarButton
-            label="Align Top"
-            active={state.cellVerticalAlign === "top"}
-            onClick={() => editor.chain().focus().setCellAttribute("verticalAlign", state.cellVerticalAlign === "top" ? null : "top").run()}
-          >
-            <IconAlignTop />
-          </ToolbarButton>
-          <ToolbarButton
-            label="Align Middle"
-            active={state.cellVerticalAlign === "middle"}
-            onClick={() => editor.chain().focus().setCellAttribute("verticalAlign", state.cellVerticalAlign === "middle" ? null : "middle").run()}
-          >
-            <IconAlignMiddle />
-          </ToolbarButton>
-          <ToolbarButton
-            label="Align Bottom"
-            active={state.cellVerticalAlign === "bottom"}
-            onClick={() => editor.chain().focus().setCellAttribute("verticalAlign", state.cellVerticalAlign === "bottom" ? null : "bottom").run()}
-          >
-            <IconAlignBottom />
           </ToolbarButton>
 
           <Divider />
@@ -382,6 +353,13 @@ export function EditorToolbar({ editor }: { editor: Editor }) {
             onClick={() => editor.chain().focus().deleteColumn().run()}
           >
             <IconDeleteCol />
+          </ToolbarButton>
+          <ToolbarButton
+            label="Delete Table"
+            disabled={!state.canDeleteTable}
+            onClick={() => editor.chain().focus().deleteTable().run()}
+          >
+            <IconDeleteTable />
           </ToolbarButton>
         </>
       )}

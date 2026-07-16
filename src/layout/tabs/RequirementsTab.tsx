@@ -7,6 +7,7 @@ import { useRequirementIndex } from "@/editor/utils/useRequirementIndex";
 import { useCommentDetails } from "@/editor/utils/useCommentDetails";
 import { badgeClass, statusLabel } from "@/layout/shared/StatusBadge";
 import { REVIEW_STATUS_CHIP_CLS, REVIEW_STATUS_SELECTED_CLS, REVIEW_STATUS_HOVER_CLS } from "@/layout/shared/reviewStatusColors";
+import { describeRequirementPattern } from "@/editor/utils/requirementOps";
 import type { RequirementRecord } from "@/editor/utils/requirementOps";
 
 // ── Review status cell ─────────────────────────────────────────────────────────
@@ -106,7 +107,7 @@ export function RequirementsTab({
   const reviewLoaded = useReviewCommentsStore((s) => s.loaded);
   const commentDetails = useCommentDetails();
 
-  const index = useRequirementIndex(editor, requirementPattern?.example ?? null);
+  const index = useRequirementIndex(editor, requirementPattern);
 
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -309,7 +310,7 @@ export function RequirementsTab({
                     <p className="text-xs">
                       Requirements matching pattern{" "}
                       <code className="rounded bg-[var(--color-border)] px-1">
-                        {requirementPattern.example}
+                        {describeRequirementPattern(requirementPattern)}
                       </code>{" "}
                       will appear here.
                     </p>

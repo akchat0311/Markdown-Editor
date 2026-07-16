@@ -370,7 +370,11 @@ export function Header({
       </div>
 
       {/* Theme toggle */}
-      <button onClick={toggleTheme} className={btnCls} title="Toggle theme">
+      <button
+        onClick={toggleTheme}
+        className="flex h-7 w-7 items-center justify-center rounded border border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-accent)] hover:bg-[var(--color-border)] transition-colors"
+        title="Toggle theme"
+      >
         {theme === "light" ? <IconMoon /> : <IconSun />}
       </button>
     </header>

@@ -22,6 +22,11 @@ export function StatusBar({ onSaveReview, onSaveReviewAs }: StatusBarProps) {
   const editor = useContext(EditorContext);
   const sourceMode = useUIStore((s) => s.sourceMode);
   const toggleSourceMode = useUIStore((s) => s.toggleSourceMode);
+  const splitViewOpen = useUIStore((s) => s.splitViewOpen);
+  const toggleSplitView = useUIStore((s) => s.toggleSplitView);
+  const splitCollapsedPane = useUIStore((s) => s.splitCollapsedPane);
+  const scrollSyncMode = useUIStore((s) => s.scrollSyncMode);
+  const toggleScrollSync = useUIStore((s) => s.toggleScrollSync);
   const isDirty = useTabStore((s) => getActiveTab(s)?.isDirty ?? false);
   const isReadOnly = useTabStore((s) => getActiveTab(s)?.isReadOnly ?? false);
   const reviewLoaded = useReviewCommentsStore((s) => s.loaded);
@@ -91,6 +96,35 @@ export function StatusBar({ onSaveReview, onSaveReviewAs }: StatusBarProps) {
         )}
         <span className="opacity-40">·</span>
         <span className="opacity-40">UTF-8</span>
+        <button
+          onClick={toggleSplitView}
+          title={splitViewOpen ? "Close split view (⌘\\)" : "Split view: editor + source (⌘\\)"}
+          className={[
+            "flex items-center gap-1 rounded px-1.5 py-0.5 font-mono transition-colors",
+            splitViewOpen
+              ? "bg-[var(--color-accent)] text-white"
+              : "hover:bg-[var(--color-border)] hover:text-[var(--color-text)]",
+          ].join(" ")}
+        >
+          <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M8 2v12M2 4h3v8H2zM11 4h3v8h-3z" />
+          </svg>
+          Split
+        </button>
+        {splitViewOpen && splitCollapsedPane === "none" && (
+          <button
+            onClick={toggleScrollSync}
+            title={scrollSyncMode === "linked" ? "Unlink scroll sync between panes" : "Sync scroll between panes by heading"}
+            className={[
+              "flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors",
+              scrollSyncMode === "linked"
+                ? "bg-[var(--color-accent)] text-white"
+                : "hover:bg-[var(--color-border)] hover:text-[var(--color-text)]",
+            ].join(" ")}
+          >
+            🔗 Sync Scroll
+          </button>
+        )}
         <button
           onClick={toggleSourceMode}
           title={sourceMode ? "Switch to WYSIWYG (⌘/)" : "View source (⌘/)"}

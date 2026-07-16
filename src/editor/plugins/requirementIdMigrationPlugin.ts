@@ -2,9 +2,10 @@ import { Plugin, PluginKey } from "@tiptap/pm/state";
 import type { EditorState } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import { useConfigStore } from "@/stores/configStore";
-import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
 import { useToastStore } from "@/stores/toastStore";
-import { derivePattern, buildDetectionRegex } from "@/editor/utils/requirementOps";
+import { migrateRequirementIdTargets } from "@/services/requirementIdMigration";
+import { compileRequirementPattern, matchRequirementId } from "@/editor/utils/requirementOps";
+import type { CompiledPattern } from "@/editor/utils/requirementOps";
 import { rewriteHeadingId } from "@/editor/utils/requirementHeadingOps";
 import {
   extractSectionNumber,
@@ -42,19 +43,18 @@ interface PluginState {
  */
 export function collectHeadingIds(
   state: EditorState,
-  regex: RegExp,
-  prefix: string,
+  compiled: CompiledPattern,
 ): Map<number, string> {
   const map = new Map<number, string>();
   state.doc.forEach((node, offset) => {
     if (node.type.name === "heading") {
-      const m = node.textContent.match(regex);
-      if (m) map.set(offset, prefix + m[1]);
+      const m = matchRequirementId(node.textContent, compiled);
+      if (m) map.set(offset, m.id);
     } else if (node.type.name === "blockquote" || node.type.name === "callout") {
       node.forEach((child, childOffset) => {
         if (child.type.name === "heading") {
-          const m = child.textContent.match(regex);
-          if (m) map.set(offset + 1 + childOffset, prefix + m[1]);
+          const m = matchRequirementId(child.textContent, compiled);
+          if (m) map.set(offset + 1 + childOffset, m.id);
         }
       });
     }
@@ -140,17 +140,15 @@ export const requirementIdMigrationPlugin = new Plugin<PluginState>({
       const meta = tr.getMeta(requirementIdMigrationKey) as { skip?: boolean } | undefined;
       if (meta?.skip || !tr.docChanged) return { renames: [] };
 
-      // Collect requirement IDs (only when pattern is configured).
+      // Collect requirement IDs (only when pattern is configured and valid).
       let prevReqIds = new Map<number, string>();
       let newReqIds = new Map<number, string>();
       const { requirementPattern } = useConfigStore.getState();
       if (requirementPattern) {
-        const derived = derivePattern(requirementPattern.example);
-        if (derived) {
-          const { prefix } = derived;
-          const regex = buildDetectionRegex(prefix);
-          prevReqIds = collectHeadingIds(prevState, regex, prefix);
-          newReqIds = collectHeadingIds(newState, regex, prefix);
+        const compiled = compileRequirementPattern(requirementPattern);
+        if (compiled) {
+          prevReqIds = collectHeadingIds(prevState, compiled);
+          newReqIds = collectHeadingIds(newState, compiled);
         }
       }
 
@@ -176,15 +174,16 @@ export const requirementIdMigrationPlugin = new Plugin<PluginState>({
         const pluginState = requirementIdMigrationKey.getState(editorView.state);
         if (!pluginState || pluginState.renames.length === 0) return;
 
-        const reviewStore = useReviewCommentsStore.getState();
         const toast = useToastStore.getState();
 
         const duplicates = pluginState.renames.filter((r) => r.isDuplicate);
         const safeRenames = pluginState.renames.filter((r) => !r.isDuplicate);
 
-        // ── Safe renames: migrate review comments ──────────────────────────────
-        for (const { oldId, newId } of safeRenames) {
-          const result = reviewStore.migrateReviewTarget(oldId, newId);
+        // ── Safe renames: migrate review comments + traceability links ─────────
+        // One call, complete mapping — traceability is remapped atomically and
+        // review comments keep their per-target conflict semantics.
+        const outcomes = migrateRequirementIdTargets(safeRenames);
+        for (const { oldId, newId, result } of outcomes) {
           if (result === "conflict") {
             toast.show(
               `Review comments for ${oldId} not migrated: ${newId} already has comments. Undo the rename to restore the original ID.`,
