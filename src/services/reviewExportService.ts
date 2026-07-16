@@ -14,6 +14,7 @@ import {
   sectionReviewId,
   isSectionReviewTarget,
 } from "@/editor/utils/sectionReviewOps";
+import { assembleCsv } from "@/services/csvUtils";
 
 // ── Row model ─────────────────────────────────────────────────────────────────
 // One row per review comment. Future export formats (Excel, HTML, PDF) should
@@ -195,29 +196,15 @@ const CSV_HEADER_LABELS: Record<keyof ReviewExportRow, string> = {
   closedAt: "Closed At",
 };
 
-function csvCell(value: string): string {
-  // RFC 4180: quote fields that contain commas, double-quotes, or line breaks.
-  if (value === "") return "";
-  if (value.includes(",") || value.includes('"') || value.includes("\n") || value.includes("\r")) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
-  return value;
-}
-
 /**
  * Converts rows to a UTF-8 CSV string (with BOM for Excel compatibility).
  * Uses CRLF line endings as required by RFC 4180.
  */
 export function generateReviewCsv(rows: ReviewExportRow[]): string {
-  const CRLF = "\r\n";
-
-  const header = CSV_HEADERS.map((k) => csvCell(CSV_HEADER_LABELS[k])).join(",");
-  const dataLines = rows.map((row) =>
-    CSV_HEADERS.map((k) => csvCell(row[k])).join(","),
+  return assembleCsv(
+    CSV_HEADERS.map((k) => CSV_HEADER_LABELS[k]),
+    rows.map((row) => CSV_HEADERS.map((k) => row[k])),
   );
-
-  // UTF-8 BOM ensures Excel opens the file with correct encoding.
-  return "﻿" + [header, ...dataLines].join(CRLF) + CRLF;
 }
 
 // ── Download trigger ──────────────────────────────────────────────────────────

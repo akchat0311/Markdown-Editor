@@ -17,6 +17,7 @@ import { Subscript } from "./Subscript";
 import { TableColumnAlign } from "./TableColumnAlign";
 import { RequirementStatus } from "./RequirementStatus";
 import { ReviewCommentBadge } from "./ReviewCommentBadge";
+import { TraceabilityBadge } from "./TraceabilityBadge";
 import { RequirementIdMigration } from "./RequirementIdMigration";
 import { LinkNavigation } from "./LinkNavigation";
 import { LinkDefinition } from "./LinkDefinition";
@@ -75,6 +76,7 @@ export function createEditorExtensions(): Extensions {
     FindReplaceExtension,
     RequirementStatus,
     ReviewCommentBadge,
+    TraceabilityBadge,
     RequirementIdMigration,
     LinkNavigation,
     LinkDefinition,

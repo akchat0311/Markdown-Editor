@@ -24,6 +24,9 @@ export function StatusBar({ onSaveReview, onSaveReviewAs }: StatusBarProps) {
   const toggleSourceMode = useUIStore((s) => s.toggleSourceMode);
   const splitViewOpen = useUIStore((s) => s.splitViewOpen);
   const toggleSplitView = useUIStore((s) => s.toggleSplitView);
+  const splitCollapsedPane = useUIStore((s) => s.splitCollapsedPane);
+  const scrollSyncMode = useUIStore((s) => s.scrollSyncMode);
+  const toggleScrollSync = useUIStore((s) => s.toggleScrollSync);
   const isDirty = useTabStore((s) => getActiveTab(s)?.isDirty ?? false);
   const isReadOnly = useTabStore((s) => getActiveTab(s)?.isReadOnly ?? false);
   const reviewLoaded = useReviewCommentsStore((s) => s.loaded);
@@ -108,6 +111,20 @@ export function StatusBar({ onSaveReview, onSaveReviewAs }: StatusBarProps) {
           </svg>
           Split
         </button>
+        {splitViewOpen && splitCollapsedPane === "none" && (
+          <button
+            onClick={toggleScrollSync}
+            title={scrollSyncMode === "linked" ? "Unlink scroll sync between panes" : "Sync scroll between panes by heading"}
+            className={[
+              "flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors",
+              scrollSyncMode === "linked"
+                ? "bg-[var(--color-accent)] text-white"
+                : "hover:bg-[var(--color-border)] hover:text-[var(--color-text)]",
+            ].join(" ")}
+          >
+            🔗 Sync Scroll
+          </button>
+        )}
         <button
           onClick={toggleSourceMode}
           title={sourceMode ? "Switch to WYSIWYG (⌘/)" : "View source (⌘/)"}

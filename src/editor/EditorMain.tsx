@@ -1,4 +1,4 @@
-import { useContext } from "react";
+import { useContext, useRef } from "react";
 import { EditorContent } from "@tiptap/react";
 import { EditorContext } from "./EditorContext";
 import { EditorToolbar } from "./Toolbar";
@@ -6,6 +6,7 @@ import { SourcePane } from "./SourcePane";
 import { SplitPaneToolbar, CollapsedPaneStrip } from "./SplitPaneChrome";
 import { ResizeHandle } from "@/layout/ResizeHandle";
 import { useTabStore, useUIStore } from "@/stores";
+import { useScrollSync } from "./utils/useScrollSync";
 
 export function EditorMain() {
   const editor = useContext(EditorContext);
@@ -17,7 +18,25 @@ export function EditorMain() {
   const collapseSplitPane = useUIStore((s) => s.collapseSplitPane);
   const maximizeSplitPane = useUIStore((s) => s.maximizeSplitPane);
   const restoreSplitView = useUIStore((s) => s.restoreSplitView);
+  const scrollSyncMode = useUIStore((s) => s.scrollSyncMode);
   const activeTabId = useTabStore((s) => s.activeTabId);
+
+  // Scroll containers for the two split-view panes — only meaningful (and only
+  // attached) while split view is open; consumed by useScrollSync.
+  const richScrollContainerRef = useRef<HTMLDivElement>(null);
+  const sourceTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Called unconditionally (rules of hooks) — internally a no-op whenever
+  // `enabled` is false, which covers both the non-split branch below (where
+  // neither ref is ever attached to a DOM node) and split view with a pane
+  // collapsed (sync has nothing meaningful to do with only one pane visible).
+  useScrollSync({
+    editor,
+    richContainerRef: richScrollContainerRef,
+    sourceTextareaRef,
+    activeTabId,
+    enabled: scrollSyncMode === "linked" && splitViewOpen && splitCollapsedPane === "none",
+  });
 
   // ── Mode switch (unchanged) ──────────────────────────────────────────────────
   //
@@ -72,7 +91,7 @@ export function EditorMain() {
           onCollapse={() => collapseSplitPane("editor")}
           onMaximize={() => maximizeSplitPane("editor")}
         />
-        <div className="flex flex-1 flex-col overflow-y-auto">
+        <div ref={richScrollContainerRef} className="flex flex-1 flex-col overflow-y-auto">
           {editor && <EditorToolbar editor={editor} />}
           <div className="w-full py-8">
             <div className="doc-page">
@@ -103,7 +122,14 @@ export function EditorMain() {
           onCollapse={() => collapseSplitPane("source")}
           onMaximize={() => maximizeSplitPane("source")}
         />
-        {editor && <SourcePane editor={editor} active={true} activeTabId={activeTabId} />}
+        {editor && (
+          <SourcePane
+            ref={sourceTextareaRef}
+            editor={editor}
+            active={true}
+            activeTabId={activeTabId}
+          />
+        )}
       </div>
 
       {sourceHidden && <CollapsedPaneStrip label="Source" onRestore={restoreSplitView} />}

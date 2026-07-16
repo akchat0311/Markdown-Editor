@@ -28,6 +28,7 @@ export interface WorkspaceDoc {
   fileName: string;
   reviewHandle?: FileSystemFileHandle;
   reviewFileName?: string;
+  traceabilityHandle?: FileSystemFileHandle;
   /** Directory handle from showDirectoryPicker — enables sibling file discovery on restore. */
   dirHandle?: FileSystemDirectoryHandle;
   lastOpenedAt: number;
@@ -39,6 +40,7 @@ export async function saveWorkspaceDoc(
   entry: Pick<WorkspaceDoc, "fileHandle" | "fileName"> & {
     dirHandle?: FileSystemDirectoryHandle;
     reviewHandle?: FileSystemFileHandle;
+    traceabilityHandle?: FileSystemFileHandle;
   },
 ): Promise<void> {
   const db = await getDB();
@@ -50,6 +52,7 @@ export async function saveWorkspaceDoc(
   };
   if (entry.dirHandle) record.dirHandle = entry.dirHandle;
   if (entry.reviewHandle) record.reviewHandle = entry.reviewHandle;
+  if (entry.traceabilityHandle) record.traceabilityHandle = entry.traceabilityHandle;
   await db.put(WORKSPACE_STORE, record);
 }
 

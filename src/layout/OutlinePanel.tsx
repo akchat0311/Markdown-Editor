@@ -45,6 +45,7 @@ import { rewriteHeadingId } from "@/editor/utils/requirementHeadingOps";
 import { requirementIdMigrationKey } from "@/editor/plugins/requirementIdMigrationPlugin";
 import { useConfigStore } from "@/stores/configStore";
 import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
+import { useTraceabilityStore } from "@/stores/traceabilityStore";
 import { useValidationStore } from "@/stores/validationStore";
 import type { OutlineNode } from "@/types/outline";
 import type { ValidationIssue } from "@/types/validation";
@@ -1935,6 +1936,17 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
       if (entry.id !== newId) renumberComments(entry.id, newId);
     }
 
+    // Traceability links migrate as ONE atomic batch. Per-entry renames would
+    // chain through overlapping old/new ID spaces (REQ_003→REQ_001 while
+    // REQ_001→REQ_002) and merge unrelated link sets — the batch remap looks
+    // each link up against its original ID exactly once. First occurrence
+    // wins for duplicate IDs, matching the review loop above.
+    const mapping = new Map<string, string>();
+    for (const { newId, entry } of replacements) {
+      if (entry.id !== newId && !mapping.has(entry.id)) mapping.set(entry.id, newId);
+    }
+    useTraceabilityStore.getState().remapRequirementIds(mapping);
+
     setRenumberConfirmOpen(false);
   }, [editor, compiledPattern, analysis]);
 
@@ -1950,7 +1962,9 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
       if (!node || node.type.name !== "heading") return;
       const tr = state.tr;
       // Suppress migration: the duplicate is being given a fresh ID; the original
-      // ID still exists in the document (first occurrence) and should keep its comments.
+      // ID still exists in the document (first occurrence) and should keep its
+      // comments. Traceability links likewise stay with the original occurrence
+      // by the same reasoning — no remap call here.
       tr.setMeta(requirementIdMigrationKey, { skip: true });
       rewriteHeadingId(tr, target.pmPos, id, newId);
       editor.view.dispatch(tr);

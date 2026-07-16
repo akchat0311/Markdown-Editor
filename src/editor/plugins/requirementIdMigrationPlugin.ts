@@ -2,8 +2,8 @@ import { Plugin, PluginKey } from "@tiptap/pm/state";
 import type { EditorState } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import { useConfigStore } from "@/stores/configStore";
-import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
 import { useToastStore } from "@/stores/toastStore";
+import { migrateRequirementIdTargets } from "@/services/requirementIdMigration";
 import { compileRequirementPattern, matchRequirementId } from "@/editor/utils/requirementOps";
 import type { CompiledPattern } from "@/editor/utils/requirementOps";
 import { rewriteHeadingId } from "@/editor/utils/requirementHeadingOps";
@@ -174,15 +174,16 @@ export const requirementIdMigrationPlugin = new Plugin<PluginState>({
         const pluginState = requirementIdMigrationKey.getState(editorView.state);
         if (!pluginState || pluginState.renames.length === 0) return;
 
-        const reviewStore = useReviewCommentsStore.getState();
         const toast = useToastStore.getState();
 
         const duplicates = pluginState.renames.filter((r) => r.isDuplicate);
         const safeRenames = pluginState.renames.filter((r) => !r.isDuplicate);
 
-        // ── Safe renames: migrate review comments ──────────────────────────────
-        for (const { oldId, newId } of safeRenames) {
-          const result = reviewStore.migrateReviewTarget(oldId, newId);
+        // ── Safe renames: migrate review comments + traceability links ─────────
+        // One call, complete mapping — traceability is remapped atomically and
+        // review comments keep their per-target conflict semantics.
+        const outcomes = migrateRequirementIdTargets(safeRenames);
+        for (const { oldId, newId, result } of outcomes) {
           if (result === "conflict") {
             toast.show(
               `Review comments for ${oldId} not migrated: ${newId} already has comments. Undo the rename to restore the original ID.`,

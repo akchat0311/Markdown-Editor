@@ -26,9 +26,19 @@ import {
   readHandleContent,
 } from "@/persistence/workspacePersistence";
 import { openReviewFile, writeToReviewHandle, saveReviewFileAs } from "@/persistence/reviewFilePersistence";
+import { openTraceabilityFile, writeToTraceabilityHandle, saveTraceabilityFileAs } from "@/persistence/traceabilityFilePersistence";
 import { saveWorkspace } from "@/persistence/workspaceSave";
-import { deriveReviewFileName, findReviewFile } from "@/persistence/documentBundleService";
+import { deriveReviewFileName, findReviewFile, deriveTraceabilityFileName, findTraceabilityFile } from "@/persistence/documentBundleService";
 import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
+import { useTraceabilityStore } from "@/stores/traceabilityStore";
+import { useTraceabilityPanelStore } from "@/stores/traceabilityPanelStore";
+import { TraceabilityDrawer } from "@/layout/TraceabilityDrawer";
+import {
+  stashTraceabilityState,
+  restoreTraceabilityState,
+  dropTraceabilityState,
+  anyStashedTraceabilityDirty,
+} from "@/services/traceabilityTabState";
 import { useCommentDrawerStore } from "@/stores/commentDrawerStore";
 import { useUserSettingsStore } from "@/stores/userSettingsStore";
 import { CommentDrawer } from "@/layout/CommentDrawer";
@@ -284,6 +294,7 @@ export default function App() {
             useTabStore.getState().updateActiveTab({
               fileHandle: ws.fileHandle,
               ...(ws.reviewHandle ? { reviewHandle: ws.reviewHandle } : {}),
+              ...(ws.traceabilityHandle ? { traceabilityHandle: ws.traceabilityHandle } : {}),
             });
 
             // Restore directory handle if it was saved and still has permission.
@@ -368,6 +379,7 @@ export default function App() {
       useTabStore.getState().updateActiveTab({
         fileHandle: handle,
         ...(ws?.reviewHandle ? { reviewHandle: ws.reviewHandle } : {}),
+        ...(ws?.traceabilityHandle ? { traceabilityHandle: ws.traceabilityHandle } : {}),
       });
 
       if (editor) {
@@ -379,7 +391,7 @@ export default function App() {
       }
 
       await addRecentFile({ name: fileName, lastOpened: Date.now(), handle });
-      await saveWorkspaceDoc({ fileHandle: handle, fileName, dirHandle: restoredDirHandle, reviewHandle: ws?.reviewHandle });
+      await saveWorkspaceDoc({ fileHandle: handle, fileName, dirHandle: restoredDirHandle, reviewHandle: ws?.reviewHandle, traceabilityHandle: ws?.traceabilityHandle });
       setTimeout(() => void attemptBundleLoadRef.current?.(fileName, handle, restoredDirHandle), 0);
     } catch (e) {
       const err = e as Error;
@@ -402,8 +414,13 @@ export default function App() {
     (s) => s.tabs.some((t) => t.isDirty && !t.isReadOnly),
   );
   const isReviewDirty = useReviewCommentsStore((s) => s.isDirty);
+  const isTraceabilityDirty = useTraceabilityStore((s) => s.isDirty);
   const hasUnsavedChangesRef = useRef(false);
-  hasUnsavedChangesRef.current = isMarkdownDirty || isReviewDirty;
+  // anyStashedTraceabilityDirty covers unsaved edits stashed on BACKGROUND
+  // tabs; every stash happens alongside a store change, so this line always
+  // re-evaluates on the render that follows a stash.
+  hasUnsavedChangesRef.current =
+    isMarkdownDirty || isReviewDirty || isTraceabilityDirty || anyStashedTraceabilityDirty();
 
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
@@ -425,6 +442,61 @@ export default function App() {
   const inlineDrawerRecord: RequirementRecord | null = inlineDrawerReqId
     ? { id: inlineDrawerReqId, status: inlineDrawerStatus, section: "", pmPos: 0, title: "" }
     : null;
+
+  // ── Traceability panel (right workspace, opened from 🧪 badges) ──────────────
+  // One contextual panel at a time: the badge click handler closes the comment
+  // drawer before opening this panel; this effect covers the reverse direction
+  // (opening a review comment drawer displaces the traceability panel).
+  const tracePanelReqId = useTraceabilityPanelStore((s) => s.reqId);
+  const closeTracePanel = useTraceabilityPanelStore((s) => s.close);
+  useEffect(() => {
+    if (inlineDrawerReqId) closeTracePanel();
+  }, [inlineDrawerReqId, closeTracePanel]);
+
+  // ── Traceability per-tab state swap ─────────────────────────────────────────
+  // The traceability store mirrors the ACTIVE tab's sidecar. On tab switch:
+  // stash the departing tab's state (preserving unsaved edits for when it
+  // reactivates), then restore the arriving tab's snapshot — or, first
+  // activation this session, read its stored sidecar handle.
+  const traceActiveTabId = useTabStore((s) => s.activeTabId);
+  const prevTraceTabIdRef = useRef(traceActiveTabId);
+  useEffect(() => {
+    const prevTabId = prevTraceTabIdRef.current;
+    if (prevTabId === traceActiveTabId) return;
+    prevTraceTabIdRef.current = traceActiveTabId;
+
+    // Stash the departing tab — unless it was just closed (close handlers
+    // drop its snapshot; re-stashing would resurrect an entry for a dead tab).
+    if (useTabStore.getState().tabs.some((t) => t.id === prevTabId)) {
+      stashTraceabilityState(prevTabId);
+    } else {
+      dropTraceabilityState(prevTabId);
+    }
+    closeTracePanel(); // panel reqId belongs to the departing document
+
+    if (restoreTraceabilityState(traceActiveTabId)) return;
+    useTraceabilityStore.getState().reset();
+
+    // First activation this session: try the tab's stored sidecar handle.
+    // (Fresh document opens are handled by attemptBundleLoad instead; this
+    // covers switching back to a tab whose sidecar was loaded from a handle.)
+    const handle = useTabStore.getState().tabs.find((t) => t.id === traceActiveTabId)?.traceabilityHandle;
+    if (!handle) return;
+    void (async () => {
+      try {
+        if ((await checkHandlePermission(handle)) !== "granted") return;
+        const text = await readHandleContent(handle);
+        // Apply only if this tab is still active and nothing loaded meanwhile.
+        const store = useTraceabilityStore.getState();
+        if (useTabStore.getState().activeTabId !== traceActiveTabId) return;
+        if (store.loaded || store.isDirty) return;
+        store.load(JSON.parse(text));
+      } catch (e) {
+        console.error("[traceability tab switch]", e);
+        useTraceabilityStore.getState().setLoadError();
+      }
+    })();
+  }, [traceActiveTabId, closeTracePanel]);
 
   // ── Document validation ───────────────────────────────────────────────────────
 
@@ -489,6 +561,7 @@ export default function App() {
           fileName: tab.fileName,
           dirHandle: ws?.dirHandle,
           reviewHandle: handle,
+          traceabilityHandle: ws?.traceabilityHandle,
         });
       }
       useToastStore.getState().show("Review comments saved.", "success");
@@ -519,6 +592,83 @@ export default function App() {
     await handleSaveReviewAs();
   }, [reviewStore, handleSaveReviewAs]);
 
+  // ── Traceability sidecar ─────────────────────────────────────────────────────
+  // Mirrors the review trio above. All store access goes through getState() —
+  // no subscription needed inside one-shot handlers.
+
+  const handleLoadTraceability = useCallback(async () => {
+    const tab = getActiveTab(useTabStore.getState());
+    try {
+      const result = await openTraceabilityFile(
+        tab?.fileHandle ? { startIn: tab.fileHandle } : undefined,
+      );
+      if (!result) return;
+      useTraceabilityStore.getState().load(result.data);
+      if (result.handle) {
+        useTabStore.getState().updateActiveTab({ traceabilityHandle: result.handle });
+      }
+      useToastStore.getState().show("Traceability file loaded.", "success");
+    } catch (e) {
+      console.error("[handleLoadTraceability]", e);
+      useToastStore.getState().show("Could not load traceability file.", "error");
+    }
+  }, []);
+
+  // Always opens the picker — used for first-time save and explicit "Save As".
+  const handleSaveTraceabilityAs = useCallback(async () => {
+    const tab = getActiveTab(useTabStore.getState());
+    if (!tab) return;
+    const suggestedName = tab.fileName
+      ? deriveTraceabilityFileName(tab.fileName)
+      : "document.test-traceability.json";
+    try {
+      const store = useTraceabilityStore.getState();
+      const handle = await saveTraceabilityFileAs(store.getFileData(), suggestedName);
+      if (!handle) return; // user cancelled
+      store.markSaved();
+      useTabStore.getState().updateActiveTab({ traceabilityHandle: handle });
+      // Persist so the handle survives a page reload alongside the markdown handle.
+      if (tab.fileHandle && tab.fileName) {
+        const ws = await loadWorkspaceDoc();
+        await saveWorkspaceDoc({
+          fileHandle: tab.fileHandle,
+          fileName: tab.fileName,
+          dirHandle: ws?.dirHandle,
+          reviewHandle: ws?.reviewHandle,
+          traceabilityHandle: handle,
+        });
+      }
+      useToastStore.getState().show("Traceability saved.", "success");
+    } catch (e) {
+      console.error("[handleSaveTraceabilityAs]", e);
+      useToastStore.getState().show("Failed to save traceability file.", "error");
+    }
+  }, []);
+
+  // Writes to the existing handle when available; opens picker on first save.
+  const handleSaveTraceability = useCallback(async () => {
+    const tab = getActiveTab(useTabStore.getState());
+    if (!tab) return;
+    const store = useTraceabilityStore.getState();
+
+    // loadError means the sidecar on disk couldn't be read — never write over
+    // it silently. Fall through to Save As so overwriting is an explicit,
+    // user-confirmed choice in the picker.
+    if (tab.traceabilityHandle && !store.loadError) {
+      try {
+        await writeToTraceabilityHandle(tab.traceabilityHandle, store.getFileData());
+        store.markSaved();
+        useToastStore.getState().show("Traceability saved.", "success");
+      } catch (e) {
+        console.error("[handleSaveTraceability]", e);
+        useToastStore.getState().show("Failed to save traceability file.", "error");
+      }
+      return;
+    }
+
+    await handleSaveTraceabilityAs();
+  }, [handleSaveTraceabilityAs]);
+
   // ── Bundle auto-discovery ────────────────────────────────────────────────────
   // After any markdown file open, attempt to locate its companion review file.
   // With the FSAA showOpenFilePicker model we only receive a FileSystemFileHandle
@@ -534,6 +684,13 @@ export default function App() {
       mdHandle: FileSystemFileHandle | null | undefined,
       dirHandle?: FileSystemDirectoryHandle,
     ) => {
+      // A new document is being opened — clear any traceability state left
+      // over from the previous document BEFORE discovery, so a document with
+      // no sidecar never inherits (and later saves) another document's links.
+      // The contextual panel closes too: its reqId belongs to the old document.
+      useTraceabilityStore.getState().reset();
+      useTraceabilityPanelStore.getState().close();
+
       const reviewName = deriveReviewFileName(markdownName);
       const { reviewData, reviewFound } = await findReviewFile(dirHandle, reviewName);
 
@@ -555,6 +712,46 @@ export default function App() {
           "info",
           { label: "Load review", onClick: () => handleLoadReview(mdHandle) },
         );
+      }
+
+      // ── Traceability sidecar ────────────────────────────────────────────────
+      // A missing sidecar is the normal case and stays silent — the (future)
+      // Traceability tab surfaces its own load CTA. Only found/unreadable
+      // outcomes are worth a toast.
+      const traceabilityName = deriveTraceabilityFileName(markdownName);
+      const trace = await findTraceabilityFile(dirHandle, traceabilityName);
+      if (trace.traceabilityFound) {
+        useTraceabilityStore.getState().load(trace.traceabilityData);
+        if (trace.traceabilityHandle) {
+          useTabStore.getState().updateActiveTab({ traceabilityHandle: trace.traceabilityHandle });
+        }
+        useToastStore.getState().show(`Traceability file loaded: ${traceabilityName}`, "success");
+      } else if (trace.traceabilityError) {
+        // The sidecar exists but couldn't be read/parsed. loadError blocks
+        // saves so the unreadable file is never overwritten by an empty store.
+        useTraceabilityStore.getState().setLoadError();
+        useToastStore.getState().show(
+          `Couldn't read ${traceabilityName} — fix or remove the file, then reopen the document.`,
+          "error",
+        );
+      } else {
+        // No directory discovery. If a traceability handle was restored from
+        // a previous session, read from it directly — a populated handle next
+        // to an empty store would otherwise risk being overwritten on save.
+        const restoredHandle = getActiveTab(useTabStore.getState())?.traceabilityHandle;
+        if (restoredHandle && (await checkHandlePermission(restoredHandle)) === "granted") {
+          try {
+            useTraceabilityStore.getState().load(JSON.parse(await readHandleContent(restoredHandle)));
+            useToastStore.getState().show(`Traceability file loaded: ${restoredHandle.name}`, "success");
+          } catch (e) {
+            console.error("[attemptBundleLoad] traceability restore", e);
+            useTraceabilityStore.getState().setLoadError();
+            useToastStore.getState().show(
+              `Couldn't read ${restoredHandle.name} — fix or remove the file, then reopen the document.`,
+              "error",
+            );
+          }
+        }
       }
     },
     [reviewStore, handleLoadReview],
@@ -873,6 +1070,13 @@ export default function App() {
         void clearWorkspaceDoc();
         setRestorePending(null);
       }
+      // The traceability store mirrors the active document's sidecar — clear
+      // it when that document closes so its data can't attach to another tab.
+      dropTraceabilityState(tabId);
+      if (tabId === useTabStore.getState().activeTabId) {
+        useTraceabilityStore.getState().reset();
+        useTraceabilityPanelStore.getState().close();
+      }
       useTabStore.getState().closeTab(tabId);
     }
   }, []);
@@ -922,6 +1126,12 @@ export default function App() {
       // User chose to close (save or discard) a disk-linked tab — don't restore it next load.
       void clearWorkspaceDoc();
       setRestorePending(null);
+    }
+    // See handleRequestClose: closing the active document clears its traceability state.
+    dropTraceabilityState(closeConfirm.tabId);
+    if (closeConfirm.tabId === useTabStore.getState().activeTabId) {
+      useTraceabilityStore.getState().reset();
+      useTraceabilityPanelStore.getState().close();
     }
     useTabStore.getState().closeTab(closeConfirm.tabId);
     setCloseConfirm(null);
@@ -1138,6 +1348,14 @@ export default function App() {
                   </div>
                 </>
               )}
+              {!inlineDrawerRecord && tracePanelReqId && (
+                <>
+                  <ResizeHandle onDelta={(d) => adjustRightPanel(-d)} />
+                  <div className="shrink-0 overflow-hidden" style={{ width: rightPanelWidth }}>
+                    <TraceabilityDrawer reqId={tracePanelReqId} onClose={closeTracePanel} />
+                  </div>
+                </>
+              )}
             </>
           ) : (
             <Dashboard
@@ -1145,6 +1363,9 @@ export default function App() {
               onLoadReview={handleLoadReview}
               onSaveReview={handleSaveReview}
               onSaveReviewAs={handleSaveReviewAs}
+              onLoadTraceability={handleLoadTraceability}
+              onSaveTraceability={handleSaveTraceability}
+              onSaveTraceabilityAs={handleSaveTraceabilityAs}
             />
           )}
         </div>

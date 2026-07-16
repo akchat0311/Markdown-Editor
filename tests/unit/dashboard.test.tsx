@@ -63,6 +63,9 @@ function renderDashboard(
     onLoadReview: () => void;
     onSaveReview: () => void;
     onSaveReviewAs: () => void;
+    onLoadTraceability: () => void;
+    onSaveTraceability: () => void;
+    onSaveTraceabilityAs: () => void;
   }> = {},
 ) {
   return render(
@@ -71,6 +74,9 @@ function renderDashboard(
       onLoadReview={props.onLoadReview ?? vi.fn()}
       onSaveReview={props.onSaveReview ?? vi.fn()}
       onSaveReviewAs={props.onSaveReviewAs ?? vi.fn()}
+      onLoadTraceability={props.onLoadTraceability ?? vi.fn()}
+      onSaveTraceability={props.onSaveTraceability ?? vi.fn()}
+      onSaveTraceabilityAs={props.onSaveTraceabilityAs ?? vi.fn()}
     />,
   );
 }
@@ -96,11 +102,12 @@ describe("Dashboard — visibility", () => {
 describe("Dashboard — tab bar", () => {
   beforeEach(resetStores);
 
-  it("renders all four tabs", () => {
+  it("renders all five tabs", () => {
     renderDashboard();
     expect(screen.getByTestId("tab-overview")).toBeInTheDocument();
     expect(screen.getByTestId("tab-requirements")).toBeInTheDocument();
     expect(screen.getByTestId("tab-reviews")).toBeInTheDocument();
+    expect(screen.getByTestId("tab-traceability")).toBeInTheDocument();
     expect(screen.getByTestId("tab-quality")).toBeInTheDocument();
   });
 
@@ -119,6 +126,12 @@ describe("Dashboard — tab bar", () => {
     renderDashboard();
     fireEvent.click(screen.getByTestId("tab-reviews"));
     expect(screen.getByTestId("reviews-tab")).toBeInTheDocument();
+  });
+
+  it("switches to Traceability tab on click", () => {
+    renderDashboard();
+    fireEvent.click(screen.getByTestId("tab-traceability"));
+    expect(screen.getByTestId("traceability-tab")).toBeInTheDocument();
   });
 
   it("switches to Quality tab on click", () => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useRef, useState } from "react";
 import type { Editor } from "@tiptap/core";
 import { serializeDocToMarkdown, parseMarkdownToDoc } from "@/markdown";
 import { useTabStore } from "@/stores/tabStore";
@@ -11,7 +11,10 @@ interface SourcePaneProps {
   activeTabId: string | undefined;
 }
 
-export function SourcePane({ editor, active, activeTabId }: SourcePaneProps) {
+export const SourcePane = forwardRef<HTMLTextAreaElement, SourcePaneProps>(function SourcePane(
+  { editor, active, activeTabId },
+  textareaRef,
+) {
   const [text, setText] = useState("");
 
   // Never captured in a closure — always reflects the latest prop value so that
@@ -139,6 +142,7 @@ export function SourcePane({ editor, active, activeTabId }: SourcePaneProps) {
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <textarea
+        ref={textareaRef}
         value={text}
         onChange={handleChange}
         spellCheck={false}
@@ -148,4 +152,4 @@ export function SourcePane({ editor, active, activeTabId }: SourcePaneProps) {
       />
     </div>
   );
-}
+});

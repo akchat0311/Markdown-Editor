@@ -5,6 +5,7 @@ import { CommentDrawer } from "@/layout/CommentDrawer";
 import { OverviewTab } from "@/layout/tabs/OverviewTab";
 import { RequirementsTab } from "@/layout/tabs/RequirementsTab";
 import { ReviewsTab } from "@/layout/tabs/ReviewsTab";
+import { TraceabilityTab } from "@/layout/tabs/TraceabilityTab";
 import { InsightsTab } from "@/layout/tabs/InsightsTab";
 import { deriveOutline, flattenOutline } from "@/editor/utils/deriveOutline";
 import { compileRequirementPattern, matchRequirementId } from "@/editor/utils/requirementOps";
@@ -15,12 +16,13 @@ import type { RequirementRecord } from "@/editor/utils/requirementOps";
 // Add future tabs (Traceability, Metrics, AI Review) here.
 // No other files need to change.
 
-export type TabId = "overview" | "requirements" | "reviews" | "quality";
+export type TabId = "overview" | "requirements" | "reviews" | "traceability" | "quality";
 
 const TABS: readonly { id: TabId; label: string }[] = [
   { id: "overview",      label: "Overview" },
   { id: "requirements",  label: "Requirements" },
   { id: "reviews",       label: "Reviews" },
+  { id: "traceability",  label: "Traceability" },
   { id: "quality",       label: "Quality" },
 ] as const;
 
@@ -32,6 +34,9 @@ export interface DashboardProps {
   onLoadReview: () => void;
   onSaveReview: () => void;
   onSaveReviewAs: () => void;
+  onLoadTraceability: () => void;
+  onSaveTraceability: () => void;
+  onSaveTraceabilityAs: () => void;
   /** Optional: open the dashboard directly on a specific tab. */
   initialTab?: TabId;
 }
@@ -43,6 +48,9 @@ export function Dashboard({
   onLoadReview,
   onSaveReview,
   onSaveReviewAs,
+  onLoadTraceability,
+  onSaveTraceability,
+  onSaveTraceabilityAs,
   initialTab,
 }: DashboardProps) {
   const editor = useContext(EditorContext);
@@ -122,6 +130,13 @@ export function Dashboard({
               onLoadReview={onLoadReview}
               onSaveReview={onSaveReview}
               onSaveReviewAs={onSaveReviewAs}
+            />
+          )}
+          {activeTab === "traceability" && (
+            <TraceabilityTab
+              onLoadTraceability={onLoadTraceability}
+              onSaveTraceability={onSaveTraceability}
+              onSaveTraceabilityAs={onSaveTraceabilityAs}
             />
           )}
           {activeTab === "quality" && (

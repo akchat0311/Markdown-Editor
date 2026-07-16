@@ -212,5 +212,26 @@ describe("uiStore", () => {
       useUIStore.getState().restoreSplitView();
       expect(useUIStore.getState().splitCollapsedPane).toBe("none");
     });
+
+    describe("scroll sync mode", () => {
+      it("starts off", () => {
+        expect(useUIStore.getInitialState().scrollSyncMode).toBe("off");
+      });
+
+      it("setScrollSyncMode sets an exact mode", () => {
+        useUIStore.getState().setScrollSyncMode("linked");
+        expect(useUIStore.getState().scrollSyncMode).toBe("linked");
+        useUIStore.getState().setScrollSyncMode("off");
+        expect(useUIStore.getState().scrollSyncMode).toBe("off");
+      });
+
+      it("toggleScrollSync flips between off and linked", () => {
+        useUIStore.setState({ scrollSyncMode: "off" });
+        useUIStore.getState().toggleScrollSync();
+        expect(useUIStore.getState().scrollSyncMode).toBe("linked");
+        useUIStore.getState().toggleScrollSync();
+        expect(useUIStore.getState().scrollSyncMode).toBe("off");
+      });
+    });
   });
 });

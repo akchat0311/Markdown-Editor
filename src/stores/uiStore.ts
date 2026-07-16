@@ -6,6 +6,14 @@ export type Theme = "light" | "dark";
 /** Which pane is fully hidden in the split view, or "none" if both are visible. */
 export type SplitCollapsedPane = "none" | "editor" | "source";
 
+/**
+ * Split-view scroll sync mode. "linked" mirrors scroll position between the
+ * rich editor and source panes by heading/requirement anchor. Modeled as a
+ * union (not a boolean) so a future mode — e.g. "follow-cursor" — can be
+ * added without a breaking store-shape change.
+ */
+export type ScrollSyncMode = "off" | "linked";
+
 interface UIState {
   theme: Theme;
   sidebarOpen: boolean;
@@ -17,6 +25,8 @@ interface UIState {
   /** Fixed pixel width of the source pane in split view; editor takes the rest. */
   splitSourceWidth: number;
   splitCollapsedPane: SplitCollapsedPane;
+  /** Persisted preference: scroll-sync behavior between split-view panes. */
+  scrollSyncMode: ScrollSyncMode;
 }
 
 interface UIActions {
@@ -39,6 +49,9 @@ interface UIActions {
   maximizeSplitPane(pane: "editor" | "source"): void;
   /** Brings both panes back after a collapse/maximize. */
   restoreSplitView(): void;
+  setScrollSyncMode(mode: ScrollSyncMode): void;
+  /** Cycles the only two modes implemented today: "off" <-> "linked". */
+  toggleScrollSync(): void;
 }
 
 export type UIStore = UIState & UIActions;
@@ -61,6 +74,7 @@ export const useUIStore = create<UIStore>()(
       splitViewOpen: false,
       splitSourceWidth: 480,
       splitCollapsedPane: "none",
+      scrollSyncMode: "off",
 
       setTheme: (theme) => set({ theme }),
       toggleTheme: () =>
@@ -121,6 +135,10 @@ export const useUIStore = create<UIStore>()(
       maximizeSplitPane: (pane) =>
         set({ splitCollapsedPane: pane === "editor" ? "source" : "editor" }),
       restoreSplitView: () => set({ splitCollapsedPane: "none" }),
+
+      setScrollSyncMode: (scrollSyncMode) => set({ scrollSyncMode }),
+      toggleScrollSync: () =>
+        set((s) => ({ scrollSyncMode: s.scrollSyncMode === "linked" ? "off" : "linked" })),
     }),
     {
       name: "md-editor-ui",
@@ -135,6 +153,10 @@ export const useUIStore = create<UIStore>()(
         // pane (if any) is collapsed, are transient view-mode state — same
         // treatment as sourceMode, which is deliberately NOT persisted either.
         splitSourceWidth: s.splitSourceWidth,
+        // scrollSyncMode is a genuine cross-session preference (like
+        // splitSourceWidth), not transient view-mode state (unlike
+        // splitViewOpen/splitCollapsedPane).
+        scrollSyncMode: s.scrollSyncMode,
       }),
     }
   )
