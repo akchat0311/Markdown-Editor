@@ -146,6 +146,69 @@
       "title": "Multiple Sentences",
       "description": "Requirements should normally contain a single sentence expressing one obligation.",
       "message": "{id} contains {count} sentences. Consider splitting it into separate requirements."
+    },
+    "doubleSpaces": {
+      "id": "doubleSpaces",
+      "category": "language",
+      "enabled": true,
+      "severity": "warning",
+      "title": "Double Spaces",
+      "description": "Runs of two or more consecutive spaces are almost always unintentional typing artifacts.",
+      "message": "{id}: found a run of {count} consecutive spaces."
+    },
+    "sentenceCapitalization": {
+      "id": "sentenceCapitalization",
+      "category": "language",
+      "enabled": true,
+      "severity": "warning",
+      "title": "Sentence Capitalization",
+      "description": "A requirement's body should start with a capital letter.",
+      "message": "{id}: body text starts with a lowercase letter."
+    },
+    "repeatedWords": {
+      "id": "repeatedWords",
+      "category": "language",
+      "enabled": true,
+      "severity": "warning",
+      "title": "Repeated Words",
+      "description": "The same word appearing twice in a row usually indicates a copy-paste or typing mistake.",
+      "message": "{id}: the word '{word}' is repeated."
+    },
+    "commaSpacing": {
+      "id": "commaSpacing",
+      "category": "language",
+      "enabled": true,
+      "severity": "warning",
+      "title": "Comma Spacing",
+      "description": "Commas should be followed by a space and never preceded by one (numeric formatting like \"10,000\" is exempt).",
+      "message": "{id}: {issue}."
+    },
+    "missingTerminalPunctuation": {
+      "id": "missingTerminalPunctuation",
+      "category": "language",
+      "enabled": true,
+      "severity": "warning",
+      "title": "Missing Terminal Punctuation",
+      "description": "A requirement's body should end with terminal punctuation (. ! ? : ;).",
+      "message": "{id}: body text does not end with terminal punctuation."
+    },
+    "periodSpacing": {
+      "id": "periodSpacing",
+      "category": "language",
+      "enabled": true,
+      "severity": "warning",
+      "title": "Period Spacing",
+      "description": "Periods should be followed by a space and never preceded by one (decimals, abbreviations, and initials are exempt).",
+      "message": "{id}: {issue}."
+    },
+    "parenthesesBalancing": {
+      "id": "parenthesesBalancing",
+      "category": "language",
+      "enabled": true,
+      "severity": "warning",
+      "title": "Unbalanced Parentheses",
+      "description": "Every opening parenthesis should have a matching closing parenthesis.",
+      "message": "{id}: unbalanced parentheses."
     }
   }
 }

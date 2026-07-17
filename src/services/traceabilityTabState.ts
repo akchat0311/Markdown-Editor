@@ -13,11 +13,12 @@
  */
 
 import { useTraceabilityStore } from "@/stores/traceabilityStore";
-import type { TestCase, TraceLink } from "@/types/traceability";
+import type { TestCase, TraceLink, CoverageStatus } from "@/types/traceability";
 
 export interface TraceabilitySnapshot {
   testCases: TestCase[];
   links: TraceLink[];
+  coverage: Record<string, CoverageStatus>;
   isDirty: boolean;
   loaded: boolean;
   loadError: boolean;
@@ -31,6 +32,7 @@ export function stashTraceabilityState(tabId: string): void {
   cache.set(tabId, {
     testCases: s.testCases,
     links: s.links,
+    coverage: s.coverage,
     isDirty: s.isDirty,
     loaded: s.loaded,
     loadError: s.loadError,

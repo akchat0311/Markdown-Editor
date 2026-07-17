@@ -244,7 +244,7 @@ describe("renumberComments", () => {
   it("moves comments from old ID to new ID", () => {
     useReviewCommentsStore.getState().addComment("REQ_001", "Alice", "Issue A");
     useReviewCommentsStore.getState().addComment("REQ_001", "Bob", "Issue B");
-    useReviewCommentsStore.getState().renumberComments("REQ_001", "REQ_004");
+    useReviewCommentsStore.getState().renumberComments([{ oldId: "REQ_001", newId: "REQ_004" }]);
     const s = useReviewCommentsStore.getState();
     expect(s.getComments("REQ_001")).toHaveLength(0);
     expect(s.getComments("REQ_004")).toHaveLength(2);
@@ -252,35 +252,138 @@ describe("renumberComments", () => {
 
   it("does nothing if old ID has no comments", () => {
     useReviewCommentsStore.getState().addComment("REQ_002", "Alice", "Issue");
-    useReviewCommentsStore.getState().renumberComments("REQ_001", "REQ_004");
+    useReviewCommentsStore.getState().renumberComments([{ oldId: "REQ_001", newId: "REQ_004" }]);
     const s = useReviewCommentsStore.getState();
     expect(s.getComments("REQ_002")).toHaveLength(1);
     expect(s.getComments("REQ_004")).toHaveLength(0);
   });
 
-  it("merges into existing comments at new ID", () => {
+  it("merges into existing comments at new ID — never overwrites, never drops", () => {
     useReviewCommentsStore.getState().addComment("REQ_001", "Alice", "Issue A");
     useReviewCommentsStore.getState().addComment("REQ_004", "Bob", "Issue B");
-    // renumber REQ_001 → REQ_004: REQ_001's comments REPLACE (not merge) — old key is gone
-    useReviewCommentsStore.getState().renumberComments("REQ_001", "REQ_004");
-    // REQ_004 now holds REQ_001's comments (the old REQ_004 comments are overwritten)
+    useReviewCommentsStore.getState().renumberComments([{ oldId: "REQ_001", newId: "REQ_004" }]);
+    // REQ_004 keeps its own comment AND gains REQ_001's — both survive.
     const s = useReviewCommentsStore.getState();
     const comments = s.getComments("REQ_004");
-    expect(comments[0].author).toBe("Alice");
+    expect(comments.map((c) => c.author)).toEqual(["Bob", "Alice"]);
   });
 
   it("sets isDirty", () => {
     useReviewCommentsStore.getState().addComment("REQ_001", "Alice", "Issue");
     useReviewCommentsStore.setState({ isDirty: false });
-    useReviewCommentsStore.getState().renumberComments("REQ_001", "REQ_002");
+    useReviewCommentsStore.getState().renumberComments([{ oldId: "REQ_001", newId: "REQ_002" }]);
     expect(useReviewCommentsStore.getState().isDirty).toBe(true);
   });
 
   it("preserves comment status across renumber", () => {
     const { id } = useReviewCommentsStore.getState().addComment("REQ_001", "Alice", "Issue");
     useReviewCommentsStore.getState().respondToComment("REQ_001", id, "Fixed", "Bob");
-    useReviewCommentsStore.getState().renumberComments("REQ_001", "REQ_007");
+    useReviewCommentsStore.getState().renumberComments([{ oldId: "REQ_001", newId: "REQ_007" }]);
     const [c] = useReviewCommentsStore.getState().getComments("REQ_007");
+    expect(c.status).toBe("responded");
+    expect(c.response).toBe("Fixed");
+  });
+
+  it("is chain-safe: overlapping renumbers never cascade through intermediate results", () => {
+    useReviewCommentsStore.getState().addComment("REQ_001", "Alice", "A");
+    useReviewCommentsStore.getState().addComment("REQ_002", "Bob", "B");
+    useReviewCommentsStore.getState().renumberComments([
+      { oldId: "REQ_001", newId: "REQ_002" },
+      { oldId: "REQ_002", newId: "REQ_001" },
+    ]);
+    const s = useReviewCommentsStore.getState();
+    expect(s.getComments("REQ_001").map((c) => c.author)).toEqual(["Bob"]);
+    expect(s.getComments("REQ_002").map((c) => c.author)).toEqual(["Alice"]);
+  });
+
+  it("is a clean no-op for an empty list or self-mapped pairs", () => {
+    useReviewCommentsStore.getState().addComment("REQ_001", "Alice", "A");
+    useReviewCommentsStore.setState({ isDirty: false });
+    useReviewCommentsStore.getState().renumberComments([]);
+    useReviewCommentsStore.getState().renumberComments([{ oldId: "REQ_001", newId: "REQ_001" }]);
+    expect(useReviewCommentsStore.getState().isDirty).toBe(false);
+    expect(useReviewCommentsStore.getState().getComments("REQ_001")).toHaveLength(1);
+  });
+
+  // ── Fan-out: a duplicated requirement ID splitting into multiple new IDs ──
+
+  it("fans a comment thread out to every destination when one oldId maps to several newIds", () => {
+    useReviewCommentsStore.getState().addComment("REQ_001", "Alice", "Issue A");
+    useReviewCommentsStore.getState().renumberComments([
+      { oldId: "REQ_001", newId: "REQ_001" }, // occurrence 1 keeps its number
+      { oldId: "REQ_001", newId: "REQ_002" }, // occurrence 2 (the duplicate)
+    ]);
+    const s = useReviewCommentsStore.getState();
+    expect(s.getComments("REQ_001").map((c) => c.author)).toEqual(["Alice"]);
+    expect(s.getComments("REQ_002").map((c) => c.author)).toEqual(["Alice"]);
+  });
+
+  it("preserves _version and other non-array metadata untouched", () => {
+    useReviewCommentsStore.setState({
+      comments: { _version: 1, REQ_001: [] },
+    });
+    useReviewCommentsStore.getState().addComment("REQ_001", "Alice", "Issue");
+    useReviewCommentsStore.getState().renumberComments([{ oldId: "REQ_001", newId: "REQ_002" }]);
+    expect(useReviewCommentsStore.getState().comments._version).toBe(1);
+  });
+});
+
+// ── copyRequirementComments ───────────────────────────────────────────────────
+//
+// Used when a duplicated heading is resolved by reassigning ONE occurrence
+// to a fresh ID (OutlinePanel's handleReassignDuplicate "Fix" action) — the
+// remaining occurrence(s) still bearing the shared ID must keep everything
+// they had; the newly reassigned occurrence gets its own copy.
+
+describe("copyRequirementComments", () => {
+  beforeEach(resetStore);
+
+  it("copies comments onto the destination without removing them from the source", () => {
+    useReviewCommentsStore.getState().addComment("REQ_001", "Alice", "Issue A");
+    useReviewCommentsStore.getState().addComment("REQ_001", "Bob", "Issue B");
+    useReviewCommentsStore.getState().copyRequirementComments("REQ_001", "REQ_003");
+
+    const s = useReviewCommentsStore.getState();
+    expect(s.getComments("REQ_001")).toHaveLength(2); // source untouched
+    expect(s.getComments("REQ_003")).toHaveLength(2); // destination gets its own copy
+  });
+
+  it("merges into the destination's own pre-existing comments — never overwrites", () => {
+    useReviewCommentsStore.getState().addComment("REQ_001", "Alice", "Issue A");
+    useReviewCommentsStore.getState().addComment("REQ_003", "Carol", "Pre-existing");
+    useReviewCommentsStore.getState().copyRequirementComments("REQ_001", "REQ_003");
+
+    const comments = useReviewCommentsStore.getState().getComments("REQ_003");
+    expect(comments.map((c) => c.author)).toEqual(["Carol", "Alice"]);
+  });
+
+  it("is a no-op when the source has no comments", () => {
+    useReviewCommentsStore.getState().addComment("REQ_002", "Alice", "Unrelated");
+    useReviewCommentsStore.setState({ isDirty: false });
+    useReviewCommentsStore.getState().copyRequirementComments("REQ_001", "REQ_003");
+    expect(useReviewCommentsStore.getState().isDirty).toBe(false);
+    expect(useReviewCommentsStore.getState().getComments("REQ_003")).toHaveLength(0);
+  });
+
+  it("is a no-op when fromReq equals toReq", () => {
+    useReviewCommentsStore.getState().addComment("REQ_001", "Alice", "Issue");
+    useReviewCommentsStore.setState({ isDirty: false });
+    useReviewCommentsStore.getState().copyRequirementComments("REQ_001", "REQ_001");
+    expect(useReviewCommentsStore.getState().isDirty).toBe(false);
+  });
+
+  it("sets isDirty when a copy actually happens", () => {
+    useReviewCommentsStore.getState().addComment("REQ_001", "Alice", "Issue");
+    useReviewCommentsStore.setState({ isDirty: false });
+    useReviewCommentsStore.getState().copyRequirementComments("REQ_001", "REQ_003");
+    expect(useReviewCommentsStore.getState().isDirty).toBe(true);
+  });
+
+  it("preserves comment status when copied", () => {
+    const { id } = useReviewCommentsStore.getState().addComment("REQ_001", "Alice", "Issue");
+    useReviewCommentsStore.getState().respondToComment("REQ_001", id, "Fixed", "Bob");
+    useReviewCommentsStore.getState().copyRequirementComments("REQ_001", "REQ_003");
+    const [c] = useReviewCommentsStore.getState().getComments("REQ_003");
     expect(c.status).toBe("responded");
     expect(c.response).toBe("Fixed");
   });

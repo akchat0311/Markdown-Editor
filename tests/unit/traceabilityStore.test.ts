@@ -5,6 +5,7 @@ function resetStore() {
   useTraceabilityStore.setState({
     testCases: [],
     links: [],
+    coverage: {},
     isDirty: false,
     loaded: false,
     loadError: false,
@@ -22,6 +23,7 @@ const VALID_FILE = {
     { tc: "TC-002", req: "REQ_001" },
     { tc: "TC-002", req: "REQ_007" },
   ],
+  coverage: { REQ_001: "PARTIAL" as const },
 };
 
 // ── migrateTraceabilityFile ───────────────────────────────────────────────────
@@ -59,7 +61,7 @@ describe("migrateTraceabilityFile", () => {
     "coerces non-object input %j to an empty repaired file",
     (input) => {
       const { data, repaired } = migrateTraceabilityFile(input);
-      expect(data).toEqual({ version: 1, testCases: [], links: [] });
+      expect(data).toEqual({ version: 1, testCases: [], links: [], coverage: {} });
       expect(repaired).toBe(true);
     },
   );
@@ -175,7 +177,47 @@ describe("migrateTraceabilityFile", () => {
       testCases: { not: "an array" },
       links: [{ tc: "TC-1" }, { req: "REQ_001" }, null, 7],
     });
-    expect(data).toEqual({ version: 1, testCases: [], links: [] });
+    expect(data).toEqual({ version: 1, testCases: [], links: [], coverage: {} });
+    expect(repaired).toBe(true);
+  });
+
+  it("drops coverage entries with an empty key or a non-enum value, flagging repair", () => {
+    const { data, repaired } = migrateTraceabilityFile({
+      testCases: [],
+      links: [],
+      coverage: { REQ_001: "FULL", "": "PARTIAL", REQ_002: "bogus", REQ_003: 1 },
+    });
+    expect(data.coverage).toEqual({ REQ_001: "FULL" });
+    expect(repaired).toBe(true);
+  });
+
+  it("trims whitespace on coverage keys", () => {
+    const { data, repaired } = migrateTraceabilityFile({
+      testCases: [],
+      links: [],
+      coverage: { " REQ_001 ": "PARTIAL" },
+    });
+    expect(data.coverage).toEqual({ REQ_001: "PARTIAL" });
+    expect(repaired).toBe(true);
+  });
+
+  it("keeps a coverage entry for a requirement absent from the document — heals like broken links", () => {
+    const { data, repaired } = migrateTraceabilityFile({
+      testCases: [],
+      links: [],
+      coverage: { REQ_GONE: "FULL" },
+    });
+    expect(data.coverage).toEqual({ REQ_GONE: "FULL" });
+    expect(repaired).toBe(false);
+  });
+
+  it("treats a non-object coverage field as empty, flagging repair", () => {
+    const { data, repaired } = migrateTraceabilityFile({
+      testCases: [],
+      links: [],
+      coverage: ["not", "a", "record"],
+    });
+    expect(data.coverage).toEqual({});
     expect(repaired).toBe(true);
   });
 });
@@ -218,6 +260,7 @@ describe("traceabilityStore load/reset/dirty", () => {
     const s = useTraceabilityStore.getState();
     expect(s.testCases).toEqual([]);
     expect(s.links).toEqual([]);
+    expect(s.coverage).toEqual({});
     expect(s.isDirty).toBe(false);
     expect(s.loaded).toBe(false);
     expect(s.loadError).toBe(false);
@@ -355,6 +398,120 @@ describe("traceabilityStore test cases", () => {
   });
 });
 
+// ── Store: coverage ────────────────────────────────────────────────────────────
+
+describe("traceabilityStore coverage", () => {
+  beforeEach(() => {
+    resetStore();
+    // Set up links directly (bypassing addLink) so the auto-promotion tested
+    // in its own describe block below doesn't pre-populate coverage here.
+    useTraceabilityStore.setState({
+      testCases: [{ id: "TC-1", title: "T1" }],
+      links: [
+        { tc: "TC-1", req: "REQ_001" },
+        { tc: "TC-1", req: "REQ_002" },
+      ],
+      coverage: {},
+      isDirty: false,
+    });
+  });
+
+  it("defaults to NONE for a requirement with no explicit coverage", () => {
+    expect(useTraceabilityStore.getState().coverage.REQ_001).toBeUndefined();
+  });
+
+  it("setCoverage records the status and marks dirty", () => {
+    useTraceabilityStore.getState().setCoverage("REQ_001", "FULL");
+    const s = useTraceabilityStore.getState();
+    expect(s.coverage).toEqual({ REQ_001: "FULL" });
+    expect(s.isDirty).toBe(true);
+  });
+
+  it("setCoverage is a clean no-op when re-selecting the same status", () => {
+    useTraceabilityStore.getState().setCoverage("REQ_001", "PARTIAL");
+    useTraceabilityStore.getState().markSaved();
+    useTraceabilityStore.getState().setCoverage("REQ_001", "PARTIAL");
+    expect(useTraceabilityStore.getState().isDirty).toBe(false);
+  });
+
+  it("setCoverage to NONE on an unset requirement is a clean no-op against the implicit default", () => {
+    useTraceabilityStore.getState().setCoverage("REQ_001", "NONE");
+    expect(useTraceabilityStore.getState().isDirty).toBe(false);
+    expect(useTraceabilityStore.getState().coverage).toEqual({});
+  });
+
+  it("setCoverage is keyed per requirement and never touches other entries", () => {
+    useTraceabilityStore.getState().setCoverage("REQ_001", "FULL");
+    useTraceabilityStore.getState().setCoverage("REQ_002", "PARTIAL");
+    expect(useTraceabilityStore.getState().coverage).toEqual({
+      REQ_001: "FULL",
+      REQ_002: "PARTIAL",
+    });
+  });
+
+  it("setCoverage ignores an empty requirement ID", () => {
+    useTraceabilityStore.getState().setCoverage("   ", "FULL");
+    expect(useTraceabilityStore.getState().coverage).toEqual({});
+    expect(useTraceabilityStore.getState().isDirty).toBe(false);
+  });
+
+  it("setCoverage rejects PARTIAL/FULL for a requirement with no linked test case", () => {
+    expect(useTraceabilityStore.getState().coverage.REQ_404).toBeUndefined();
+    useTraceabilityStore.getState().setCoverage("REQ_404", "PARTIAL");
+    useTraceabilityStore.getState().setCoverage("REQ_404", "FULL");
+    expect(useTraceabilityStore.getState().coverage).toEqual({});
+    expect(useTraceabilityStore.getState().isDirty).toBe(false);
+  });
+
+  it("setCoverage to NONE is always allowed, even without a linked test case", () => {
+    useTraceabilityStore.getState().setCoverage("REQ_001", "FULL");
+    useTraceabilityStore.getState().setCoverage("REQ_001", "NONE");
+    expect(useTraceabilityStore.getState().coverage).toEqual({ REQ_001: "NONE" });
+  });
+
+  it("removeLink reverts coverage to NONE only when the requirement's last link is removed", () => {
+    useTraceabilityStore.getState().addTestCase("TC-2", "T2");
+    useTraceabilityStore.getState().addLink("TC-2", "REQ_001"); // REQ_001 now has 2 links
+    useTraceabilityStore.getState().setCoverage("REQ_001", "FULL");
+    useTraceabilityStore.getState().markSaved();
+
+    useTraceabilityStore.getState().removeLink("TC-1", "REQ_001"); // one link remains
+    expect(useTraceabilityStore.getState().coverage).toEqual({ REQ_001: "FULL" });
+
+    useTraceabilityStore.getState().removeLink("TC-2", "REQ_001"); // last link gone
+    expect(useTraceabilityStore.getState().coverage).toEqual({});
+    expect(useTraceabilityStore.getState().isDirty).toBe(true);
+  });
+
+  it("removeLinks reverts coverage to NONE for every requirement that loses its last link", () => {
+    useTraceabilityStore.getState().setCoverage("REQ_001", "PARTIAL");
+    useTraceabilityStore.getState().setCoverage("REQ_002", "FULL");
+    useTraceabilityStore.getState().removeLinks([
+      { tc: "TC-1", req: "REQ_001" },
+      { tc: "TC-1", req: "REQ_002" },
+    ]);
+    expect(useTraceabilityStore.getState().coverage).toEqual({});
+  });
+
+  it("deleteTestCase reverts coverage to NONE for requirements orphaned by the deletion", () => {
+    useTraceabilityStore.getState().setCoverage("REQ_001", "PARTIAL");
+    useTraceabilityStore.getState().deleteTestCase("TC-1");
+    expect(useTraceabilityStore.getState().coverage).toEqual({});
+  });
+
+  it("removeLink leaves coverage untouched when the requirement still has other links", () => {
+    useTraceabilityStore.getState().addTestCase("TC-2", "T2");
+    useTraceabilityStore.getState().addLink("TC-2", "REQ_001");
+    useTraceabilityStore.getState().setCoverage("REQ_001", "FULL");
+    useTraceabilityStore.getState().markSaved();
+
+    useTraceabilityStore.getState().removeLink("TC-1", "REQ_001");
+    expect(useTraceabilityStore.getState().coverage).toEqual({ REQ_001: "FULL" });
+    // Only the link removal marks it dirty — coverage itself was untouched.
+    expect(useTraceabilityStore.getState().isDirty).toBe(true);
+  });
+});
+
 // ── Store: links ──────────────────────────────────────────────────────────────
 
 describe("traceabilityStore links", () => {
@@ -405,6 +562,138 @@ describe("traceabilityStore links", () => {
   it("removeLink of a missing pair is a clean no-op", () => {
     useTraceabilityStore.getState().removeLink("TC-1", "REQ_404");
     expect(useTraceabilityStore.getState().isDirty).toBe(false);
+  });
+});
+
+// ── Store: coverage auto-promotion on first link ──────────────────────────────
+
+describe("traceabilityStore coverage auto-promotion", () => {
+  beforeEach(() => {
+    resetStore();
+    useTraceabilityStore.getState().addTestCase("TC-1", "T1");
+    useTraceabilityStore.getState().addTestCase("TC-2", "T2");
+    useTraceabilityStore.getState().markSaved();
+  });
+
+  it("addLink promotes NONE to PARTIAL the moment a requirement gets its first link", () => {
+    useTraceabilityStore.getState().addLink("TC-1", "REQ_001");
+    expect(useTraceabilityStore.getState().coverage).toEqual({ REQ_001: "PARTIAL" });
+  });
+
+  it("addLink does NOT re-promote a requirement that already had a link", () => {
+    useTraceabilityStore.getState().addLink("TC-1", "REQ_001");
+    useTraceabilityStore.getState().setCoverage("REQ_001", "FULL");
+    useTraceabilityStore.getState().addLink("TC-2", "REQ_001"); // second link, same req
+    expect(useTraceabilityStore.getState().coverage).toEqual({ REQ_001: "FULL" });
+  });
+
+  it("addLink re-adding an already-linked pair (set-semantics no-op) does not touch coverage", () => {
+    useTraceabilityStore.getState().addLink("TC-1", "REQ_001");
+    useTraceabilityStore.getState().setCoverage("REQ_001", "NONE");
+    useTraceabilityStore.getState().addLink("TC-1", "REQ_001"); // already linked
+    expect(useTraceabilityStore.getState().coverage).toEqual({ REQ_001: "NONE" });
+  });
+
+  it("addLinks (batch) promotes NONE to PARTIAL exactly once for the target requirement", () => {
+    useTraceabilityStore.getState().addLinks(["TC-1", "TC-2"], "REQ_001");
+    expect(useTraceabilityStore.getState().coverage).toEqual({ REQ_001: "PARTIAL" });
+  });
+
+  it("addLinks does not promote when the requirement already had a link", () => {
+    useTraceabilityStore.getState().addLink("TC-1", "REQ_001");
+    useTraceabilityStore.getState().setCoverage("REQ_001", "FULL");
+    useTraceabilityStore.getState().addLinks(["TC-2"], "REQ_001");
+    expect(useTraceabilityStore.getState().coverage).toEqual({ REQ_001: "FULL" });
+  });
+
+  it("promotion is keyed per requirement — unrelated requirements are untouched", () => {
+    useTraceabilityStore.getState().addLink("TC-1", "REQ_001");
+    expect(useTraceabilityStore.getState().coverage).toEqual({ REQ_001: "PARTIAL" });
+    expect(useTraceabilityStore.getState().coverage.REQ_002).toBeUndefined();
+  });
+
+  it("unlinking down to zero then relinking promotes to PARTIAL again", () => {
+    useTraceabilityStore.getState().addLink("TC-1", "REQ_001");
+    useTraceabilityStore.getState().setCoverage("REQ_001", "FULL");
+    useTraceabilityStore.getState().removeLink("TC-1", "REQ_001"); // reverts to NONE (implicit)
+    useTraceabilityStore.getState().addLink("TC-2", "REQ_001"); // first link again
+    expect(useTraceabilityStore.getState().coverage).toEqual({ REQ_001: "PARTIAL" });
+  });
+});
+
+// ── Store: copyRequirementLinks ────────────────────────────────────────────────
+
+describe("traceabilityStore copyRequirementLinks", () => {
+  beforeEach(() => {
+    resetStore();
+    useTraceabilityStore.getState().addTestCase("TC-1", "T1");
+    useTraceabilityStore.getState().addTestCase("TC-2", "T2");
+  });
+
+  it("copies links onto the destination without removing them from the source", () => {
+    useTraceabilityStore.getState().addLink("TC-1", "REQ_001");
+    useTraceabilityStore.getState().addLink("TC-2", "REQ_001");
+    useTraceabilityStore.getState().copyRequirementLinks("REQ_001", "REQ_003");
+
+    const s = useTraceabilityStore.getState();
+    expect(s.links).toEqual(
+      expect.arrayContaining([
+        { tc: "TC-1", req: "REQ_001" },
+        { tc: "TC-2", req: "REQ_001" },
+        { tc: "TC-1", req: "REQ_003" },
+        { tc: "TC-2", req: "REQ_003" },
+      ]),
+    );
+    expect(s.links).toHaveLength(4); // source links preserved, not moved
+  });
+
+  it("copies the source's explicit coverage onto an unset destination", () => {
+    useTraceabilityStore.getState().addLink("TC-1", "REQ_001");
+    useTraceabilityStore.getState().setCoverage("REQ_001", "FULL");
+    useTraceabilityStore.getState().copyRequirementLinks("REQ_001", "REQ_003");
+    expect(useTraceabilityStore.getState().coverage).toEqual({ REQ_001: "FULL", REQ_003: "FULL" });
+  });
+
+  it("never overwrites the destination's own existing coverage", () => {
+    useTraceabilityStore.getState().addLink("TC-1", "REQ_001");
+    useTraceabilityStore.getState().setCoverage("REQ_001", "FULL");
+    useTraceabilityStore.getState().addLink("TC-2", "REQ_003");
+    useTraceabilityStore.getState().setCoverage("REQ_003", "PARTIAL");
+
+    useTraceabilityStore.getState().copyRequirementLinks("REQ_001", "REQ_003");
+    expect(useTraceabilityStore.getState().coverage).toEqual({ REQ_001: "FULL", REQ_003: "PARTIAL" });
+  });
+
+  it("promotes an unset destination to PARTIAL when the source has no explicit status", () => {
+    useTraceabilityStore.getState().addLink("TC-1", "REQ_001"); // auto-promotes REQ_001 to PARTIAL
+    useTraceabilityStore.getState().setCoverage("REQ_001", "NONE"); // explicitly reset back to No
+    useTraceabilityStore.getState().copyRequirementLinks("REQ_001", "REQ_003");
+    // Source stays explicitly "No"; destination gets the standard first-link promotion.
+    expect(useTraceabilityStore.getState().coverage).toEqual({ REQ_001: "NONE", REQ_003: "PARTIAL" });
+  });
+
+  it("is a no-op when the source has no links", () => {
+    useTraceabilityStore.getState().markSaved();
+    useTraceabilityStore.getState().copyRequirementLinks("REQ_001", "REQ_003");
+    expect(useTraceabilityStore.getState().links).toEqual([]);
+    expect(useTraceabilityStore.getState().isDirty).toBe(false);
+  });
+
+  it("is a no-op when fromReq equals toReq", () => {
+    useTraceabilityStore.getState().addLink("TC-1", "REQ_001");
+    useTraceabilityStore.getState().markSaved();
+    useTraceabilityStore.getState().copyRequirementLinks("REQ_001", "REQ_001");
+    expect(useTraceabilityStore.getState().isDirty).toBe(false);
+  });
+
+  it("does not duplicate a pair the destination already has", () => {
+    useTraceabilityStore.getState().addLink("TC-1", "REQ_001");
+    useTraceabilityStore.getState().addLink("TC-1", "REQ_003"); // already present on destination
+    useTraceabilityStore.getState().markSaved();
+    useTraceabilityStore.getState().copyRequirementLinks("REQ_001", "REQ_003");
+    expect(useTraceabilityStore.getState().links.filter((l) => l.req === "REQ_003")).toEqual([
+      { tc: "TC-1", req: "REQ_003" },
+    ]);
   });
 });
 

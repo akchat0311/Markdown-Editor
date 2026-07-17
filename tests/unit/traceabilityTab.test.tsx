@@ -25,7 +25,7 @@ import {
 } from "@/layout/tabs/traceabilityRows";
 import { useTraceabilityStore } from "@/stores/traceabilityStore";
 import { useConfigStore } from "@/stores/configStore";
-import type { TestCase, TraceLink } from "@/types/traceability";
+import type { TestCase, TraceLink, CoverageStatus } from "@/types/traceability";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -43,47 +43,56 @@ const LINKS: TraceLink[] = [
 
 // ── buildTraceabilityRows ─────────────────────────────────────────────────────
 
+const COVERAGE: Record<string, CoverageStatus> = { REQ_001: "FULL", REQ_003: "PARTIAL" };
+
 describe("buildTraceabilityRows", () => {
   it("produces one row per requirement in the given order", () => {
-    const rows = buildTraceabilityRows(["REQ_001", "REQ_002", "REQ_003"], TCS, LINKS);
+    const rows = buildTraceabilityRows(["REQ_001", "REQ_002", "REQ_003"], TCS, LINKS, {});
     expect(rows.map((r) => r.reqId)).toEqual(["REQ_001", "REQ_002", "REQ_003"]);
   });
 
   it("attaches linked test cases in links-array order and leaves others empty", () => {
-    const rows = buildTraceabilityRows(["REQ_001", "REQ_002", "REQ_003"], TCS, LINKS);
+    const rows = buildTraceabilityRows(["REQ_001", "REQ_002", "REQ_003"], TCS, LINKS, {});
     expect(rows[0].testCases.map((t) => t.id)).toEqual(["TC_001", "TC_002"]);
     expect(rows[1].testCases).toEqual([]);
     expect(rows[2].testCases.map((t) => t.id)).toEqual(["TC_005"]);
   });
 
   it("collapses duplicate requirement IDs to the first occurrence", () => {
-    const rows = buildTraceabilityRows(["REQ_001", "REQ_001"], TCS, LINKS);
+    const rows = buildTraceabilityRows(["REQ_001", "REQ_001"], TCS, LINKS, {});
     expect(rows).toHaveLength(1);
   });
 
   it("ignores broken links (req not in the index) without crashing", () => {
-    const rows = buildTraceabilityRows(["REQ_001"], TCS, [
-      ...LINKS,
-      { tc: "TC_001", req: "REQ_DELETED" },
-    ]);
+    const rows = buildTraceabilityRows(
+      ["REQ_001"],
+      TCS,
+      [...LINKS, { tc: "TC_001", req: "REQ_DELETED" }],
+      {},
+    );
     expect(rows).toHaveLength(1);
     expect(rows[0].testCases.map((t) => t.id)).toEqual(["TC_001", "TC_002"]);
   });
 
   it("skips links whose test case is unknown", () => {
-    const rows = buildTraceabilityRows(["REQ_001"], TCS, [{ tc: "TC_999", req: "REQ_001" }]);
+    const rows = buildTraceabilityRows(["REQ_001"], TCS, [{ tc: "TC_999", req: "REQ_001" }], {});
     expect(rows[0].testCases).toEqual([]);
   });
 
   it("returns no rows when the index is empty", () => {
-    expect(buildTraceabilityRows([], TCS, LINKS)).toEqual([]);
+    expect(buildTraceabilityRows([], TCS, LINKS, {})).toEqual([]);
+  });
+
+  it("attaches the coverage status, defaulting unset requirements to NONE", () => {
+    const rows = buildTraceabilityRows(["REQ_001", "REQ_002", "REQ_003"], TCS, LINKS, COVERAGE);
+    expect(rows.map((r) => r.coverage)).toEqual(["FULL", "NONE", "PARTIAL"]);
   });
 });
 
 // ── filterTraceabilityRows ────────────────────────────────────────────────────
 
 describe("filterTraceabilityRows", () => {
-  const rows = buildTraceabilityRows(["REQ_001", "REQ_002", "REQ_003"], TCS, LINKS);
+  const rows = buildTraceabilityRows(["REQ_001", "REQ_002", "REQ_003"], TCS, LINKS, {});
 
   it("returns all rows for an empty or whitespace query", () => {
     expect(filterTraceabilityRows(rows, "")).toHaveLength(3);
@@ -137,7 +146,7 @@ describe("summarizeTraceability", () => {
   it("counts requirements, linked requirements, test cases, links, and broken links", () => {
     const reqIds = ["REQ_001", "REQ_002", "REQ_003"];
     const links = [...LINKS, { tc: "TC_001", req: "REQ_GONE" }];
-    const rows = buildTraceabilityRows(reqIds, TCS, links);
+    const rows = buildTraceabilityRows(reqIds, TCS, links, {});
     const broken = findBrokenLinks(reqIds, TCS, links);
     expect(summarizeTraceability(rows, TCS, links, broken)).toEqual({
       requirementCount: 3,
@@ -191,6 +200,7 @@ function resetStores() {
   useTraceabilityStore.setState({
     testCases: [],
     links: [],
+    coverage: {},
     isDirty: false,
     loaded: false,
     loadError: false,
@@ -275,6 +285,25 @@ describe("TraceabilityTab — table", () => {
     expect(rows).toHaveLength(1);
     expect(within(rows[0]).getAllByRole("cell")[1]).toHaveTextContent("REQ_001");
     expect(screen.getByText("Showing 1 of 3 requirements")).toBeInTheDocument();
+  });
+
+  it("shows the Coverage column, defaulting unset requirements to No", async () => {
+    useTraceabilityStore.getState().load({
+      version: 1,
+      testCases: TCS,
+      links: LINKS,
+      coverage: { REQ_001: "FULL", REQ_003: "PARTIAL" },
+    });
+    renderTab();
+    await waitForRows();
+
+    const rows = screen.getAllByTestId("traceability-row");
+    // cell[0] checkbox, cell[1] Requirement ID, cell[2] Test Cases, cell[3] Coverage.
+    expect(rows.map((r) => within(r).getAllByRole("cell")[3].textContent)).toEqual([
+      "Yes",
+      "No",
+      "Partial",
+    ]);
   });
 
   it("shows the no-pattern notice when no requirement pattern is configured", () => {

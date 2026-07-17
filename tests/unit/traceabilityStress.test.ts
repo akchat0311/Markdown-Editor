@@ -27,7 +27,7 @@ import {
   collectTraceabilityCsvRows,
   generateTraceabilityCsv,
 } from "@/services/traceabilityExportService";
-import type { TestCase, TraceLink } from "@/types/traceability";
+import type { TestCase, TraceLink, CoverageStatus } from "@/types/traceability";
 
 const REQ_COUNT = 1000;
 const TC_COUNT = 1000;
@@ -43,6 +43,11 @@ const LINKS: TraceLink[] = Array.from({ length: LINK_COUNT }, (_, i) => ({
   tc: TCS[(i * 7) % TC_COUNT].id,
   req: REQ_IDS[(i * 13) % REQ_COUNT],
 }));
+// One coverage entry per requirement, cycling through all three statuses.
+const STATUSES: CoverageStatus[] = ["NONE", "PARTIAL", "FULL"];
+const COVERAGE: Record<string, CoverageStatus> = Object.fromEntries(
+  REQ_IDS.map((id, i) => [id, STATUSES[i % STATUSES.length]]),
+);
 
 function time(label: string, fn: () => void): number {
   const start = performance.now();
@@ -57,6 +62,7 @@ beforeEach(() => {
   useTraceabilityStore.setState({
     testCases: TCS,
     links: LINKS,
+    coverage: COVERAGE,
     isDirty: false,
     loaded: true,
     loadError: false,
@@ -67,7 +73,7 @@ describe("traceability stress — projections & dashboard row model", () => {
   it("builds rows, filter, summary and broken detection within bounds", () => {
     let rows!: ReturnType<typeof buildTraceabilityRows>;
     const tRows = time("buildTraceabilityRows (1000 req / 5000 links)", () => {
-      rows = buildTraceabilityRows(REQ_IDS, TCS, LINKS);
+      rows = buildTraceabilityRows(REQ_IDS, TCS, LINKS, COVERAGE);
     });
     expect(rows).toHaveLength(REQ_COUNT);
     expect(tRows).toBeLessThan(200);
@@ -89,12 +95,9 @@ describe("traceability stress — atomic remap", () => {
   it("remaps 1000 requirement IDs over 5000 links in one update", () => {
     // Full renumber: every requirement gets a new ID (shifted by one — an
     // overlapping mapping, the worst case for chain-safety bookkeeping).
-    const mapping = new Map<string, string>();
-    for (let i = 0; i < REQ_COUNT; i++) {
-      mapping.set(REQ_IDS[i], REQ_IDS[(i + 1) % REQ_COUNT]);
-    }
+    const renames = REQ_IDS.map((oldId, i) => ({ oldId, newId: REQ_IDS[(i + 1) % REQ_COUNT] }));
     const t = time("remapRequirementIds (1000 renames / 5000 links)", () => {
-      useTraceabilityStore.getState().remapRequirementIds(mapping);
+      useTraceabilityStore.getState().remapRequirementIds(renames);
     });
     expect(useTraceabilityStore.getState().links.length).toBeGreaterThan(0);
     expect(t).toBeLessThan(200);
@@ -105,7 +108,7 @@ describe("traceability stress — CSV export", () => {
   it("collects and generates the full CSV within bounds", () => {
     let rows!: string[][];
     const tCollect = time("collectTraceabilityCsvRows", () => {
-      rows = collectTraceabilityCsvRows(REQ_IDS, TCS, LINKS);
+      rows = collectTraceabilityCsvRows(REQ_IDS, TCS, LINKS, COVERAGE);
     });
     // Aggregated format: exactly one row per requirement (all links are valid
     // here, so no broken rows follow); every link's TC ID appears in a cell.

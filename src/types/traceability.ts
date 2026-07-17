@@ -15,9 +15,28 @@ export interface TraceLink {
   req: string;
 }
 
+/**
+ * Engineer-selected verification coverage for a requirement — never inferred
+ * automatically from the linked test cases. Applies to the whole requirement,
+ * not to individual links, because a set of test cases may only collectively
+ * verify it.
+ */
+export type CoverageStatus = "NONE" | "PARTIAL" | "FULL";
+
+export const COVERAGE_STATUSES: readonly CoverageStatus[] = ["NONE", "PARTIAL", "FULL"];
+
+/** Display labels — the UI and CSV export must show only these strings. */
+export const COVERAGE_LABELS: Record<CoverageStatus, string> = {
+  NONE: "No",
+  PARTIAL: "Partial",
+  FULL: "Yes",
+};
+
 /** On-disk schema of the <document>.test-traceability.json sidecar. */
 export interface TraceabilityFile {
   version?: number;
   testCases: TestCase[];
   links: TraceLink[];
+  /** Requirement ID → coverage status. Missing entries default to "NONE". */
+  coverage: Record<string, CoverageStatus>;
 }

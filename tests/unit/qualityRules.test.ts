@@ -36,9 +36,23 @@ function termCfg(terms: string[], message = "{id}: '{term}' found."): TermListRu
 
 // ── RULE_REGISTRY ─────────────────────────────────────────────────────────────
 
+// Trigger text for each Writing Hygiene rule, shared by "every rule fires"
+// and "issues carry the rule's category" below — each isolates exactly one
+// rule's own trigger condition, avoiding cross-triggering other rules
+// (e.g. no double-triggering repeatedWords/commaSpacing in the same string).
+const WRITING_HYGIENE_TRIGGERS: Record<string, string> = {
+  doubleSpaces: "The system shall  respond within limits.",
+  sentenceCapitalization: "the system shall respond within limits.",
+  repeatedWords: "The the system shall respond within limits.",
+  commaSpacing: "The system,shall respond within limits.",
+  missingTerminalPunctuation: "The system shall respond within limits",
+  periodSpacing: "The system shall respond .then log the event.",
+  parenthesesBalancing: "The system shall respond (see note.",
+};
+
 describe("RULE_REGISTRY", () => {
-  it("contains exactly 8 configurable rules", () => {
-    expect(RULE_REGISTRY).toHaveLength(8);
+  it("contains exactly 15 configurable rules", () => {
+    expect(RULE_REGISTRY).toHaveLength(15);
   });
 
   it("each rule has a unique ID", () => {
@@ -56,6 +70,13 @@ describe("RULE_REGISTRY", () => {
       "vagueQuantifiers",
       "escapeClauses",
       "multipleSentences",
+      "doubleSpaces",
+      "sentenceCapitalization",
+      "repeatedWords",
+      "commaSpacing",
+      "missingTerminalPunctuation",
+      "periodSpacing",
+      "parenthesesBalancing",
     ]);
   });
 
@@ -75,6 +96,7 @@ describe("RULE_REGISTRY", () => {
       vagueQuantifiers: "The system shall handle some requests.",
       escapeClauses: "The system shall respond if possible.",
       multipleSentences: "The system shall respond. It shall also log the event.",
+      ...WRITING_HYGIENE_TRIGGERS,
     };
     for (const rule of RULE_REGISTRY) {
       const config = (qualityRules.rules as Record<string, unknown>)[rule.id];
@@ -83,11 +105,39 @@ describe("RULE_REGISTRY", () => {
     }
   });
 
+  it("every rule that fires populates range with valid, in-bounds offsets", () => {
+    const triggers: Record<string, string> = {
+      weakModal: "The system should respond.",
+      ambiguousWords: "Response shall be fast.",
+      forbiddenTerms: "Performance target is TBD.",
+      wordCount: Array.from({ length: 200 }, (_, i) => `word${i}`).join(" "),
+      multipleShall: "System shall do X and shall do Y.",
+      vagueQuantifiers: "The system shall handle some requests.",
+      escapeClauses: "The system shall respond if possible.",
+      multipleSentences: "The system shall respond. It shall also log the event.",
+      ...WRITING_HYGIENE_TRIGGERS,
+    };
+    for (const rule of RULE_REGISTRY) {
+      const config = (qualityRules.rules as Record<string, unknown>)[rule.id];
+      const body = triggers[rule.id];
+      const issues = rule.check(req("REQ_001", body), config);
+      for (const issue of issues) {
+        if (issue.range === undefined) continue; // not every existing rule populates it — fine
+        expect(issue.range.from, `rule "${rule.id}" range.from`).toBeGreaterThanOrEqual(0);
+        expect(issue.range.to, `rule "${rule.id}" range.to`).toBeLessThanOrEqual(body.length);
+        expect(issue.range.from, `rule "${rule.id}" range.from <= range.to`).toBeLessThanOrEqual(issue.range.to);
+      }
+    }
+  });
+
   it("disabled rules produce no issues regardless of body text", () => {
     for (const rule of RULE_REGISTRY) {
       const baseConfig = (qualityRules.rules as Record<string, unknown>)[rule.id] as Record<string, unknown>;
       const disabledConfig = { ...baseConfig, enabled: false };
-      const triggerAll = "should TBD fast some if possible " + Array.from({ length: 200 }, () => "word").join(" ") + " System shall do X. It shall also do Y.";
+      const triggerAll =
+        "should TBD fast  some if possible( " +
+        Array.from({ length: 200 }, () => "word").join(" ") +
+        " System shall do X,Y .also shall do Z and W";
       const issues = rule.check(req("REQ_001", triggerAll), disabledConfig);
       expect(issues, `rule "${rule.id}" ran despite being disabled`).toHaveLength(0);
     }
@@ -103,6 +153,7 @@ describe("RULE_REGISTRY", () => {
       vagueQuantifiers: "The system shall handle some requests.",
       escapeClauses: "The system shall respond if possible.",
       multipleSentences: "The system shall respond. It shall also log the event.",
+      ...WRITING_HYGIENE_TRIGGERS,
     };
     for (const rule of RULE_REGISTRY) {
       const config = (qualityRules.rules as Record<string, unknown>)[rule.id] as Record<string, unknown>;

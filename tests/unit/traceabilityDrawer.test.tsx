@@ -20,6 +20,7 @@ function resetStore() {
   useTraceabilityStore.setState({
     testCases: [],
     links: [],
+    coverage: {},
     isDirty: false,
     loaded: false,
     loadError: false,
@@ -164,6 +165,72 @@ describe("TraceabilityDrawer", () => {
     expect(s.testCases).toEqual([{ id: "TC_100", title: "Fresh case" }]);
     expect(s.links).toEqual([{ tc: "TC_100", req: "REQ_003" }]);
     expect(screen.getByTestId("drawer-tc-row")).toHaveTextContent("Fresh case");
+  });
+
+  it("hides the Coverage selector entirely when no test case is linked", () => {
+    render(<TraceabilityDrawer reqId="REQ_001" onClose={vi.fn()} />);
+    expect(screen.queryByTestId("drawer-coverage")).toBeNull();
+  });
+
+  it("shows only Partial and Yes once a test case is linked — no No option", () => {
+    useTraceabilityStore.getState().load({
+      version: 1,
+      testCases: TCS,
+      links: [{ tc: "TC_001", req: "REQ_001" }],
+    });
+    render(<TraceabilityDrawer reqId="REQ_001" onClose={vi.fn()} />);
+
+    expect(screen.getByTestId("drawer-coverage")).toHaveTextContent("Partial");
+    expect(screen.getByTestId("drawer-coverage")).toHaveTextContent("Yes");
+    expect(screen.queryByTestId("drawer-coverage-radio-NONE")).toBeNull();
+    expect(screen.getByTestId("drawer-coverage-radio-PARTIAL")).not.toBeChecked();
+    expect(screen.getByTestId("drawer-coverage-radio-FULL")).not.toBeChecked();
+  });
+
+  it("selecting a coverage option updates the store, scoped to this requirement only", () => {
+    useTraceabilityStore.getState().load({
+      version: 1,
+      testCases: TCS,
+      links: [{ tc: "TC_001", req: "REQ_001" }],
+    });
+    render(<TraceabilityDrawer reqId="REQ_001" onClose={vi.fn()} />);
+    fireEvent.click(screen.getByTestId("drawer-coverage-radio-PARTIAL"));
+    expect(useTraceabilityStore.getState().coverage).toEqual({ REQ_001: "PARTIAL" });
+    expect(screen.getByTestId("drawer-coverage-radio-PARTIAL")).toBeChecked();
+
+    fireEvent.click(screen.getByTestId("drawer-coverage-radio-FULL"));
+    expect(useTraceabilityStore.getState().coverage).toEqual({ REQ_001: "FULL" });
+    expect(screen.getByTestId("drawer-coverage-radio-PARTIAL")).not.toBeChecked();
+  });
+
+  it("reflects the requirement's stored coverage on open, independent of other requirements", () => {
+    useTraceabilityStore.getState().load({
+      version: 1,
+      testCases: TCS,
+      links: [
+        { tc: "TC_001", req: "REQ_001" },
+        { tc: "TC_005", req: "REQ_002" },
+      ],
+      coverage: { REQ_001: "FULL", REQ_002: "PARTIAL" },
+    });
+    render(<TraceabilityDrawer reqId="REQ_002" onClose={vi.fn()} />);
+    expect(screen.getByTestId("drawer-coverage-radio-PARTIAL")).toBeChecked();
+    expect(screen.getByTestId("drawer-coverage-radio-FULL")).not.toBeChecked();
+  });
+
+  it("re-hides the Coverage selector after unlinking the last test case", () => {
+    useTraceabilityStore.getState().load({
+      version: 1,
+      testCases: TCS,
+      links: [{ tc: "TC_001", req: "REQ_001" }],
+      coverage: { REQ_001: "FULL" },
+    });
+    render(<TraceabilityDrawer reqId="REQ_001" onClose={vi.fn()} />);
+    expect(screen.getByTestId("drawer-coverage")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("drawer-unlink-tc"));
+    expect(screen.queryByTestId("drawer-coverage")).toBeNull();
+    expect(useTraceabilityStore.getState().coverage).toEqual({}); // reverted to the implicit NONE default
   });
 
   it("edits a test case through the shared editor dialog; the row updates live", () => {

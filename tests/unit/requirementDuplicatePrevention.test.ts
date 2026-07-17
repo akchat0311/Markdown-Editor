@@ -194,7 +194,7 @@ describe("renumberComments — bulk renumber is unaffected", () => {
 
   it("renumberComments still moves all comments unconditionally", () => {
     useReviewCommentsStore.getState().addComment("REQ_001", "Alice", "Issue");
-    useReviewCommentsStore.getState().renumberComments("REQ_001", "REQ_003");
+    useReviewCommentsStore.getState().renumberComments([{ oldId: "REQ_001", newId: "REQ_003" }]);
 
     const s = useReviewCommentsStore.getState();
     expect(s.getComments("REQ_001")).toHaveLength(0);
@@ -228,6 +228,45 @@ describe("duplicate-ID reassignment is unaffected", () => {
     expect(renames[0].oldId).toBe("REQ_001");
     expect(renames[0].newId).toBe("REQ_003");
     expect(renames[0].isDuplicate).toBe(false);
+  });
+});
+
+// ── detectRenames — oldIdStillExists (copy vs. genuine rename) ───────────────
+//
+// A duplicated heading that diverges to a fresh ID is NOT a rename of the
+// OTHER (untouched) heading still bearing the old ID — its traceability
+// links must not be moved away from it. See copyRequirementLinks in
+// traceabilityStore.ts and the routing in requirementIdMigrationPlugin's
+// view.update.
+
+describe("detectRenames — oldIdStillExists", () => {
+  it("is true when the old ID survives on a different, untouched heading (copy-and-diverge)", () => {
+    // Two REQ_001 headings; the second one's ID is edited to REQ_003.
+    const prev = new Map([[0, "REQ_001"], [100, "REQ_001"]]);
+    const next = new Map([[0, "REQ_001"], [100, "REQ_003"]]);
+
+    const [r] = detectRenames(prev, next, (p) => p);
+    expect(r.oldIdStillExists).toBe(true);
+    expect(r.isDuplicate).toBe(false); // newId (REQ_003) is unique — not reverted
+  });
+
+  it("is false for a genuine rename — the old ID vanishes entirely", () => {
+    const prev = new Map([[0, "REQ_001"], [100, "REQ_002"]]);
+    const next = new Map([[0, "REQ_005"], [100, "REQ_002"]]);
+
+    const [r] = detectRenames(prev, next, (p) => p);
+    expect(r.oldIdStillExists).toBe(false);
+  });
+
+  it("is false when the old ID's only other occurrence was also renamed away in the same transaction", () => {
+    // Both REQ_001 headings renamed to different fresh IDs in one transaction —
+    // neither should see the old ID as "still existing".
+    const prev = new Map([[0, "REQ_001"], [100, "REQ_001"]]);
+    const next = new Map([[0, "REQ_003"], [100, "REQ_004"]]);
+
+    const renames = detectRenames(prev, next, (p) => p);
+    expect(renames).toHaveLength(2);
+    expect(renames.every((r) => !r.oldIdStillExists)).toBe(true);
   });
 });
 

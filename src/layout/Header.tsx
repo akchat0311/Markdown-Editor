@@ -18,8 +18,8 @@ function IconSidebar() {
 
 function IconMoon() {
   return (
-    <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor">
-      <path d="M2.89 1.9A6.5 6.5 0 1 0 13.1 12.1a5 5 0 0 1-10.2-10.2Z" />
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
     </svg>
   );
 }

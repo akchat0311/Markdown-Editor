@@ -3,6 +3,7 @@ import type { EditorState } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import { useConfigStore } from "@/stores/configStore";
 import { useToastStore } from "@/stores/toastStore";
+import { useTraceabilityStore } from "@/stores/traceabilityStore";
 import { migrateRequirementIdTargets } from "@/services/requirementIdMigration";
 import { compileRequirementPattern, matchRequirementId } from "@/editor/utils/requirementOps";
 import type { CompiledPattern } from "@/editor/utils/requirementOps";
@@ -24,6 +25,14 @@ export interface RenameEntry {
   newId: string;
   /** True when newId already exists at a different position in the new document state. */
   isDuplicate: boolean;
+  /**
+   * True when oldId ALSO still exists elsewhere in the new document state —
+   * i.e. this heading was a duplicate of another (still-unchanged) heading
+   * that has now diverged to a fresh ID. This is NOT a genuine rename: the
+   * other heading bearing oldId was never touched, so its traceability links
+   * must not be moved away from it. See copyRequirementLinks.
+   */
+  oldIdStillExists: boolean;
   /** Absolute PM position of the heading in the NEW state (used to revert duplicates). */
   pos: number;
 }
@@ -96,6 +105,11 @@ export function collectSectionIds(state: EditorState): Map<number, string> {
  * `isDuplicate` is set when the new ID appears more than once in `newIds`,
  * i.e. the rename would create a collision with an existing requirement.
  *
+ * `oldIdStillExists` is set when the OLD ID also still appears somewhere in
+ * `newIds` — meaning this heading was one of a pair of duplicates and the
+ * other, untouched heading still carries oldId. That other heading was never
+ * edited, so this is a copy-and-diverge, not a genuine rename.
+ *
  * `mapPos` is `tr.mapping.map` in production; tests can supply an identity
  * function when positions are not expected to shift.
  */
@@ -118,6 +132,7 @@ export function detectRenames(
       oldId,
       newId,
       isDuplicate: (newIdCounts.get(newId) ?? 0) > 1,
+      oldIdStillExists: (newIdCounts.get(oldId) ?? 0) > 0,
       pos: newPos,
     });
   }
@@ -179,10 +194,18 @@ export const requirementIdMigrationPlugin = new Plugin<PluginState>({
         const duplicates = pluginState.renames.filter((r) => r.isDuplicate);
         const safeRenames = pluginState.renames.filter((r) => !r.isDuplicate);
 
-        // ── Safe renames: migrate review comments + traceability links ─────────
+        // A "safe" rename splits further: a genuine rename (the old ID truly
+        // vanished) cascades normally, but when the old ID still exists on a
+        // different, untouched heading, this is a duplicated section that
+        // diverged to a fresh ID — not a rename of that other heading. Its
+        // links must not be moved away from it.
+        const trueRenames = safeRenames.filter((r) => !r.oldIdStillExists);
+        const copyRenames = safeRenames.filter((r) => r.oldIdStillExists);
+
+        // ── True renames: migrate review comments + traceability links ─────────
         // One call, complete mapping — traceability is remapped atomically and
         // review comments keep their per-target conflict semantics.
-        const outcomes = migrateRequirementIdTargets(safeRenames);
+        const outcomes = migrateRequirementIdTargets(trueRenames);
         for (const { oldId, newId, result } of outcomes) {
           if (result === "conflict") {
             toast.show(
@@ -190,6 +213,15 @@ export const requirementIdMigrationPlugin = new Plugin<PluginState>({
               "error",
             );
           }
+        }
+
+        // ── Copy renames: duplicate traceability links onto the new ID —────────
+        // the untouched original (still bearing oldId) keeps its own links.
+        // Review comments are deliberately left alone: the original heading
+        // was never edited, so its comment thread stays exactly where it was.
+        for (const { oldId, newId } of copyRenames) {
+          if (isSectionReviewTarget(oldId) || isSectionReviewTarget(newId)) continue;
+          useTraceabilityStore.getState().copyRequirementLinks(oldId, newId);
         }
 
         // ── Duplicate renames: revert the document change ──────────────────────

@@ -1,33 +1,20 @@
 import type { ValidationIssue } from "@/types/validation";
 import type { RequirementRef } from "@/services/documentValidationService";
 import type { QualityRule, MessageRuleConfig } from "../types";
+import { scrubNonTerminalPeriods } from "./_sentenceScrub";
 
 /**
  * Counts sentence-terminating punctuation (. ! ?) in requirement body text,
- * scrubbing patterns that produce false positives:
- *
- * Handled:
- *   - Multi-part numbers: 3.14, 3.2.1, 1.0.0
- *   - Common prose abbreviations never used as sentence terminators: e.g., i.e., vs.
- *   - Single-letter initials followed by a space: "J. Smith", "A. B."
- *
- * Known limitations (not handled in v1):
- *   - Multi-letter abbreviations other than e.g./i.e./vs. (e.g. "Fig.", "Sec.")
- *   - URLs containing dots (e.g. "http://example.com")
- *   - Acronyms with internal dots mid-sentence (e.g. "U.S.A. certified")
+ * after scrubbing periods that don't actually terminate a sentence (see
+ * _sentenceScrub.ts for exactly what's handled and its known limitations —
+ * unchanged from before this rule's scrubbing logic was extracted into
+ * that shared file so periodSpacing/missingTerminalPunctuation could reuse
+ * it without duplicating or drifting from this implementation).
  */
 function countSentences(text: string): number {
   const t = text.trim();
   if (!t) return 0;
-
-  const s = t
-    // Multi-part numbers: 3.14, 3.2.1, v1.0
-    .replace(/\d+(?:\.\d+)+/g, "N")
-    // Prose abbreviations that are never sentence terminators
-    .replace(/\b(e\.g|i\.e|vs)\./gi, "X")
-    // Single-letter initials followed by a space: "J. Smith"
-    .replace(/\b[A-Za-z]\.\s/g, "X ");
-
+  const s = scrubNonTerminalPeriods(t);
   return (s.match(/[.!?](?=\s|$)/g) ?? []).length;
 }
 

@@ -8,7 +8,7 @@ const JSON_PICKER_OPTS = {
 
 export function serializeTraceability(data: TraceabilityFile): string {
   return JSON.stringify(
-    { version: 1, testCases: data.testCases, links: data.links },
+    { version: 1, testCases: data.testCases, links: data.links, coverage: data.coverage },
     null,
     2,
   );
