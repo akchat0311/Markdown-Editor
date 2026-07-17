@@ -8,6 +8,13 @@ import { vagueQuantifiersRule } from "./rules/vagueQuantifiers";
 import { escapeClausesRule } from "./rules/escapeClauses";
 import { multipleSentencesRule } from "./rules/multipleSentences";
 import { undefinedAcronymsRule } from "./rules/undefinedAcronyms";
+import { doubleSpacesRule } from "./rules/doubleSpaces";
+import { sentenceCapitalizationRule } from "./rules/sentenceCapitalization";
+import { repeatedWordsRule } from "./rules/repeatedWords";
+import { commaSpacingRule } from "./rules/commaSpacing";
+import { missingTerminalPunctuationRule } from "./rules/missingTerminalPunctuation";
+import { periodSpacingRule } from "./rules/periodSpacing";
+import { parenthesesBalancingRule } from "./rules/parenthesesBalancing";
 
 export type { QualityRule, DocumentQualityRule };
 
@@ -29,6 +36,14 @@ export const RULE_REGISTRY: QualityRule[] = [
   vagueQuantifiersRule,
   escapeClausesRule,
   multipleSentencesRule,
+  // ── Writing Hygiene (Phase 1) ──
+  doubleSpacesRule,
+  sentenceCapitalizationRule,
+  repeatedWordsRule,
+  commaSpacingRule,
+  missingTerminalPunctuationRule,
+  periodSpacingRule,
+  parenthesesBalancingRule,
 ];
 
 /**

@@ -17,6 +17,7 @@ const FILE: TraceabilityFile = {
   version: 1,
   testCases: [{ id: "TC-001", title: "Login" }],
   links: [{ tc: "TC-001", req: "REQ_001" }],
+  coverage: { REQ_001: "PARTIAL" },
 };
 
 // ── Test doubles ──────────────────────────────────────────────────────────────
@@ -86,8 +87,8 @@ describe("serializeTraceability", () => {
   });
 
   it("stamps version 1 even when the input snapshot omits it", () => {
-    const json = serializeTraceability({ testCases: [], links: [] });
-    expect(JSON.parse(json)).toEqual({ version: 1, testCases: [], links: [] });
+    const json = serializeTraceability({ testCases: [], links: [], coverage: {} });
+    expect(JSON.parse(json)).toEqual({ version: 1, testCases: [], links: [], coverage: {} });
   });
 });
 

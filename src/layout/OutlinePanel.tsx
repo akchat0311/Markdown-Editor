@@ -1929,23 +1929,19 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
 
     editor.view.dispatch(tr);
 
-    // Migrate review comments to the new IDs in the same operation.
-    // Only process pairs where the ID actually changed.
-    const renumberComments = useReviewCommentsStore.getState().renumberComments;
-    for (const { newId, entry } of replacements) {
-      if (entry.id !== newId) renumberComments(entry.id, newId);
-    }
-
-    // Traceability links migrate as ONE atomic batch. Per-entry renames would
-    // chain through overlapping old/new ID spaces (REQ_003→REQ_001 while
-    // REQ_001→REQ_002) and merge unrelated link sets — the batch remap looks
-    // each link up against its original ID exactly once. First occurrence
-    // wins for duplicate IDs, matching the review loop above.
-    const mapping = new Map<string, string>();
-    for (const { newId, entry } of replacements) {
-      if (entry.id !== newId && !mapping.has(entry.id)) mapping.set(entry.id, newId);
-    }
-    useTraceabilityStore.getState().remapRequirementIds(mapping);
+    // Companion data (review comments + traceability links) migrates as ONE
+    // atomic batch each, from the full occurrence-level rename list — NOT a
+    // Map collapsed to unique old IDs, and deliberately INCLUDING pairs
+    // where newId === entry.id. A requirement duplicated via copy/paste
+    // shares one ID across several physical headings; when one occurrence
+    // keeps its number while another is renumbered away, that unchanged
+    // pair is the ONLY signal the stores have that the ID was shared at
+    // all — filtering it out here would make the store think it's a plain
+    // 1:1 move and wrongly relocate the unchanged occurrence's data. Both
+    // stores already no-op internally on true self-only pairs.
+    const renames = replacements.map(({ newId, entry }) => ({ oldId: entry.id, newId }));
+    useReviewCommentsStore.getState().renumberComments(renames);
+    useTraceabilityStore.getState().remapRequirementIds(renames);
 
     setRenumberConfirmOpen(false);
   }, [editor, compiledPattern, analysis]);
@@ -1961,13 +1957,18 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
       const node = state.doc.nodeAt(target.pmPos);
       if (!node || node.type.name !== "heading") return;
       const tr = state.tr;
-      // Suppress migration: the duplicate is being given a fresh ID; the original
-      // ID still exists in the document (first occurrence) and should keep its
-      // comments. Traceability links likewise stay with the original occurrence
-      // by the same reasoning — no remap call here.
+      // Suppress migration: we handle companion-data duplication explicitly
+      // below, occurrence-aware — same philosophy as handleRenumber. The
+      // remaining occurrence(s) still bearing `id` are untouched and keep
+      // everything they had; the just-reassigned duplicate gets its own
+      // COPY of what was shared under the old ID, not a move (its data was
+      // never "only" that occurrence's to begin with — it was shared).
       tr.setMeta(requirementIdMigrationKey, { skip: true });
       rewriteHeadingId(tr, target.pmPos, id, newId);
       editor.view.dispatch(tr);
+
+      useReviewCommentsStore.getState().copyRequirementComments(id, newId);
+      useTraceabilityStore.getState().copyRequirementLinks(id, newId);
     },
     [editor, compiledPattern, analysis]
   );

@@ -1,5 +1,62 @@
 import { create } from "zustand";
-import type { TestCase, TraceLink, TraceabilityFile } from "@/types/traceability";
+import type { TestCase, TraceLink, TraceabilityFile, CoverageStatus } from "@/types/traceability";
+
+function isCoverageStatus(v: unknown): v is CoverageStatus {
+  return v === "NONE" || v === "PARTIAL" || v === "FULL";
+}
+
+/**
+ * Coverage above NONE is only meaningful once at least one test case is
+ * linked — it's an assessment of evidence, not a standalone claim. Called
+ * after every link removal so a requirement that loses its last link
+ * reverts to the implicit NONE default instead of keeping a stale
+ * PARTIAL/FULL with nothing behind it.
+ */
+function clearOrphanedCoverage(
+  nextLinks: TraceLink[],
+  coverage: Record<string, CoverageStatus>,
+  affectedReqIds: Iterable<string>,
+): Record<string, CoverageStatus> {
+  const stillLinked = new Set(nextLinks.map((l) => l.req));
+  let changed = false;
+  const next = { ...coverage };
+  for (const req of affectedReqIds) {
+    if (stillLinked.has(req)) continue;
+    if (next[req] !== undefined) {
+      delete next[req];
+      changed = true;
+    }
+  }
+  return changed ? next : coverage;
+}
+
+/**
+ * A requirement's first linked test case is the start of evidence — leaving
+ * coverage at "No" once a test case exists reads as untouched/forgotten, so
+ * it's promoted to "Partial" automatically. This is the ONE exception to
+ * "coverage is never inferred": it only sets the weakest positive state, and
+ * only the moment a requirement's link count goes from zero to nonzero. It
+ * never touches a requirement that already had a link (that's an existing,
+ * deliberate choice) or overwrites an explicit non-NONE status.
+ */
+function autoPromoteCoverage(
+  prevLinks: TraceLink[],
+  nextLinks: TraceLink[],
+  coverage: Record<string, CoverageStatus>,
+  affectedReqIds: Iterable<string>,
+): Record<string, CoverageStatus> {
+  const hadLinkBefore = new Set(prevLinks.map((l) => l.req));
+  const hasLinkAfter = new Set(nextLinks.map((l) => l.req));
+  let changed = false;
+  const next = { ...coverage };
+  for (const req of affectedReqIds) {
+    if (hadLinkBefore.has(req) || !hasLinkAfter.has(req)) continue;
+    if ((next[req] ?? "NONE") !== "NONE") continue;
+    next[req] = "PARTIAL";
+    changed = true;
+  }
+  return changed ? next : coverage;
+}
 
 // ── Loader / migration ────────────────────────────────────────────────────────
 
@@ -32,6 +89,11 @@ function isRecord(v: unknown): v is Record<string, unknown> {
  * - duplicate (tc, req) pairs are deduplicated
  * - links whose `req` matches no current requirement are KEPT — that is an
  *   expected lifecycle state ("broken" link), not corruption
+ * - `coverage` entries are keyed by requirement ID, which lives in the
+ *   document, not this sidecar — existence is never validated here, only
+ *   shape (non-empty string key, one of NONE/PARTIAL/FULL). An entry for a
+ *   requirement absent from the document is kept, same rationale as broken
+ *   links: it heals automatically if the requirement reappears.
  */
 export function migrateTraceabilityFile(raw: unknown): MigratedTraceability {
   const obj = isRecord(raw) ? raw : {};
@@ -80,7 +142,20 @@ export function migrateTraceabilityFile(raw: unknown): MigratedTraceability {
     links.push({ tc, req });
   }
 
-  return { data: { version: 1, testCases, links }, repaired };
+  const coverage: Record<string, CoverageStatus> = {};
+  const rawCoverage = isRecord(obj.coverage) ? obj.coverage : {};
+  if (!isRecord(obj.coverage) && obj.coverage !== undefined) repaired = true;
+  for (const [rawReq, value] of Object.entries(rawCoverage)) {
+    const reqId = rawReq.trim();
+    if (!reqId || !isCoverageStatus(value)) {
+      repaired = true;
+      continue;
+    }
+    if (reqId !== rawReq || coverage[reqId] !== undefined) repaired = true;
+    coverage[reqId] = value;
+  }
+
+  return { data: { version: 1, testCases, links, coverage }, repaired };
 }
 
 // ── Store ─────────────────────────────────────────────────────────────────────
@@ -88,6 +163,8 @@ export function migrateTraceabilityFile(raw: unknown): MigratedTraceability {
 interface TraceabilityState {
   testCases: TestCase[];
   links: TraceLink[];
+  /** Requirement ID → coverage status. Missing entries are treated as "NONE". */
+  coverage: Record<string, CoverageStatus>;
   isDirty: boolean;
   loaded: boolean;
   /**
@@ -111,6 +188,15 @@ interface TraceabilityState {
   /** Deletes the test case and all of its links. */
   deleteTestCase(id: string): void;
 
+  /**
+   * Sets the engineer-selected coverage status for a requirement. This is the
+   * ONLY way coverage changes — it is never inferred from linked test cases.
+   * PARTIAL/FULL require at least one linked test case (a no-op otherwise);
+   * NONE is always allowed. A requirement that loses its last link
+   * automatically reverts to NONE — see removeLink / removeLinks / deleteTestCase.
+   */
+  setCoverage(reqId: string, status: CoverageStatus): void;
+
   /** Set semantics: no-op if the pair exists. Returns false when `tc` is unknown or `req` is empty. */
   addLink(tc: string, req: string): boolean;
   removeLink(tc: string, req: string): void;
@@ -125,19 +211,45 @@ interface TraceabilityState {
   removeLinks(pairs: TraceLink[]): void;
 
   /**
-   * Applies a complete oldId→newId requirement rename mapping to every link
-   * in ONE atomic state update.
+   * Applies a complete set of requirement-ID renames to every link and
+   * coverage entry in ONE atomic state update. Takes a rename LIST, not a
+   * Map — a single old ID can legitimately appear more than once (a
+   * requirement duplicated via copy/paste shares one ID across several
+   * physical headings until renumbering assigns each its own new ID), and a
+   * Map key can only hold one value, which would silently drop all but the
+   * first occurrence.
    *
-   * - Chain-safe: each link's req is looked up once against its ORIGINAL
-   *   value, so overlapping mappings (REQ_003→REQ_001 while REQ_001→REQ_002)
-   *   never cascade through intermediate states.
-   * - Union semantics: a rename onto an ID that already has links merges the
-   *   two sets and dedupes — a rename can never lose a link.
+   * Renames are grouped by oldId first, then handled per group:
+   * - ONE destination: a genuine rename — existing links/coverage MOVE onto
+   *   the new ID. Chain-safe (each link's req is looked up once against its
+   *   ORIGINAL value, so overlapping mappings like REQ_003→REQ_001 while
+   *   REQ_001→REQ_002 never cascade through intermediate states) and
+   *   union-safe (merges with any links already at the destination, never
+   *   losing one). Coverage never overwrites a destination's own explicit
+   *   status.
+   * - MULTIPLE destinations (a duplicated ID splitting apart): there is no
+   *   way to tell which pre-existing link "belonged" to which physical
+   *   occurrence, so the source's ENTIRE link set (and explicit coverage
+   *   status, if any) is COPIED onto every destination — never split, never
+   *   silently dropped — and the old, now-nonexistent ID is cleared. A
+   *   destination that gains its first-ever link this way is still subject
+   *   to the standard first-link coverage promotion.
    *
    * This is the ONLY correct way to migrate requirement renames; never call
    * per-ID mutations in a loop (see services/requirementIdMigration).
    */
-  remapRequirementIds(mapping: ReadonlyMap<string, string>): void;
+  remapRequirementIds(renames: readonly { oldId: string; newId: string }[]): void;
+
+  /**
+   * Duplicates one requirement's links onto another WITHOUT touching the
+   * source — used when a duplicated heading diverges to a fresh ID (the
+   * original, untouched heading must keep everything it had; this is a
+   * copy, not a rename). Coverage: an explicit non-NONE status on the
+   * source is copied too (only if the destination has none yet); either
+   * way, the destination is still subject to the standard first-link
+   * promotion (NONE → PARTIAL) if it had no links before this call.
+   */
+  copyRequirementLinks(fromReq: string, toReq: string): void;
 
   /** Snapshot in on-disk schema form, for the persistence layer. */
   getFileData(): TraceabilityFile;
@@ -146,6 +258,7 @@ interface TraceabilityState {
 export const useTraceabilityStore = create<TraceabilityState>((set, get) => ({
   testCases: [],
   links: [],
+  coverage: {},
   isDirty: false,
   loaded: false,
   loadError: false,
@@ -155,6 +268,7 @@ export const useTraceabilityStore = create<TraceabilityState>((set, get) => ({
     set({
       testCases: data.testCases,
       links: data.links,
+      coverage: data.coverage,
       isDirty: repaired,
       loaded: true,
       loadError: false,
@@ -162,7 +276,7 @@ export const useTraceabilityStore = create<TraceabilityState>((set, get) => ({
   },
 
   reset() {
-    set({ testCases: [], links: [], isDirty: false, loaded: false, loadError: false });
+    set({ testCases: [], links: [], coverage: {}, isDirty: false, loaded: false, loadError: false });
   },
 
   markSaved() {
@@ -170,7 +284,7 @@ export const useTraceabilityStore = create<TraceabilityState>((set, get) => ({
   },
 
   setLoadError() {
-    set({ testCases: [], links: [], isDirty: false, loaded: false, loadError: true });
+    set({ testCases: [], links: [], coverage: {}, isDirty: false, loaded: false, loadError: true });
   },
 
   addTestCase(id, title) {
@@ -207,10 +321,28 @@ export const useTraceabilityStore = create<TraceabilityState>((set, get) => ({
   },
 
   deleteTestCase(id) {
-    if (!get().testCases.some((t) => t.id === id)) return;
-    set((s) => ({
+    const s = get();
+    if (!s.testCases.some((t) => t.id === id)) return;
+    const affectedReqs = s.links.filter((l) => l.tc === id).map((l) => l.req);
+    const nextLinks = s.links.filter((l) => l.tc !== id);
+    const nextCoverage = clearOrphanedCoverage(nextLinks, s.coverage, affectedReqs);
+    set({
       testCases: s.testCases.filter((t) => t.id !== id),
-      links: s.links.filter((l) => l.tc !== id),
+      links: nextLinks,
+      coverage: nextCoverage,
+      isDirty: true,
+    });
+  },
+
+  setCoverage(reqId, status) {
+    const trimmedReq = reqId.trim();
+    if (!trimmedReq) return;
+    const s = get();
+    // Partial/Full require evidence — at least one linked test case.
+    if (status !== "NONE" && !s.links.some((l) => l.req === trimmedReq)) return;
+    if ((s.coverage[trimmedReq] ?? "NONE") === status) return;
+    set((cur) => ({
+      coverage: { ...cur.coverage, [trimmedReq]: status },
       isDirty: true,
     }));
   },
@@ -220,16 +352,18 @@ export const useTraceabilityStore = create<TraceabilityState>((set, get) => ({
     const trimmedReq = req.trim();
     if (!trimmedReq || !s.testCases.some((t) => t.id === tc)) return false;
     if (s.links.some((l) => l.tc === tc && l.req === trimmedReq)) return true; // set semantics
-    set((cur) => ({ links: [...cur.links, { tc, req: trimmedReq }], isDirty: true }));
+    const nextLinks = [...s.links, { tc, req: trimmedReq }];
+    const nextCoverage = autoPromoteCoverage(s.links, nextLinks, s.coverage, [trimmedReq]);
+    set({ links: nextLinks, coverage: nextCoverage, isDirty: true });
     return true;
   },
 
   removeLink(tc, req) {
-    if (!get().links.some((l) => l.tc === tc && l.req === req)) return;
-    set((s) => ({
-      links: s.links.filter((l) => !(l.tc === tc && l.req === req)),
-      isDirty: true,
-    }));
+    const s = get();
+    if (!s.links.some((l) => l.tc === tc && l.req === req)) return;
+    const nextLinks = s.links.filter((l) => !(l.tc === tc && l.req === req));
+    const nextCoverage = clearOrphanedCoverage(nextLinks, s.coverage, [req]);
+    set({ links: nextLinks, coverage: nextCoverage, isDirty: true });
   },
 
   addLinks(tcIds, req) {
@@ -246,7 +380,9 @@ export const useTraceabilityStore = create<TraceabilityState>((set, get) => ({
       toAdd.push({ tc, req: trimmedReq });
     }
     if (toAdd.length === 0) return;
-    set((cur) => ({ links: [...cur.links, ...toAdd], isDirty: true }));
+    const nextLinks = [...s.links, ...toAdd];
+    const nextCoverage = autoPromoteCoverage(s.links, nextLinks, s.coverage, [trimmedReq]);
+    set({ links: nextLinks, coverage: nextCoverage, isDirty: true });
   },
 
   removeLinks(pairs) {
@@ -255,19 +391,57 @@ export const useTraceabilityStore = create<TraceabilityState>((set, get) => ({
     const s = get();
     const next = s.links.filter((l) => !keys.has(JSON.stringify([l.tc, l.req])));
     if (next.length === s.links.length) return;
-    set({ links: next, isDirty: true });
+    const affectedReqs = pairs.map((p) => p.req);
+    const nextCoverage = clearOrphanedCoverage(next, s.coverage, affectedReqs);
+    set({ links: next, coverage: nextCoverage, isDirty: true });
   },
 
-  remapRequirementIds(mapping) {
-    if (mapping.size === 0) return;
+  remapRequirementIds(renames) {
+    if (renames.length === 0) return;
     const s = get();
+
+    // Group by oldId: a duplicated requirement produces MULTIPLE distinct
+    // destinations for the same oldId, which is exactly what a Map key
+    // could never represent. Self-pairs (newId === oldId) are KEPT in the
+    // group at this stage — when one duplicate occurrence keeps its number
+    // while another diverges (e.g. REQ_001→REQ_001 and REQ_001→REQ_002 in
+    // the same batch), the self-pair is the only signal that REQ_001 was
+    // shared by two occurrences at all; dropping it here would collapse the
+    // group to a single destination and wrongly MOVE everything to REQ_002.
+    const byOld = new Map<string, string[]>();
+    for (const { oldId, newId } of renames) {
+      let dests = byOld.get(oldId);
+      if (!dests) {
+        dests = [];
+        byOld.set(oldId, dests);
+      }
+      if (!dests.includes(newId)) dests.push(newId);
+    }
+    // NOW drop true no-ops: a group whose only destination is the source
+    // itself changes nothing.
+    for (const [oldReq, dests] of byOld) {
+      if (dests.length === 1 && dests[0] === oldReq) byOld.delete(oldReq);
+    }
+    if (byOld.size === 0) return;
+
+    const simple = new Map<string, string>(); // 1 destination → move
+    const fanOut = new Map<string, string[]>(); // >1 destination → copy to each
+    for (const [oldReq, dests] of byOld) {
+      if (dests.length === 1) simple.set(oldReq, dests[0]);
+      else fanOut.set(oldReq, dests);
+    }
+
     let changed = false;
     const seen = new Set<string>();
     const next: TraceLink[] = [];
+
+    // ── Single-destination: existing chain-safe MOVE, reading link.req
+    // against the ORIGINAL s.links so overlapping mappings never cascade. ──
     for (const link of s.links) {
-      const mapped = mapping.get(link.req);
+      if (fanOut.has(link.req)) continue; // handled entirely below
+      const mapped = simple.get(link.req);
       const req = mapped ?? link.req;
-      if (mapped !== undefined && mapped !== link.req) changed = true;
+      if (mapped !== undefined) changed = true;
       const key = JSON.stringify([link.tc, req]);
       if (seen.has(key)) {
         // Union-dedupe: the rename merged this pair into an existing one.
@@ -277,12 +451,87 @@ export const useTraceabilityStore = create<TraceabilityState>((set, get) => ({
       seen.add(key);
       next.push(req === link.req ? link : { ...link, req });
     }
+
+    // ── Fan-out: copy the source's entire link set onto every destination
+    // (never split — there's no way to tell which link "belonged" to which
+    // physical occurrence) — the old, now-nonexistent ID is simply dropped
+    // by never being re-pushed to `next` above. ──
+    for (const [oldReq, dests] of fanOut) {
+      const sourceLinks = s.links.filter((l) => l.req === oldReq);
+      if (sourceLinks.length > 0) changed = true;
+      for (const newReq of dests) {
+        for (const l of sourceLinks) {
+          const key = JSON.stringify([l.tc, newReq]);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          next.push({ tc: l.tc, req: newReq });
+        }
+      }
+    }
+
+    // Coverage: single-destination moves (never overwriting an existing
+    // explicit status at the destination); fan-out copies an explicit
+    // status onto every destination that doesn't already have one.
+    let nextCoverage = { ...s.coverage };
+    for (const [oldReq, newReq] of simple) {
+      const value = s.coverage[oldReq];
+      if (value === undefined) continue;
+      delete nextCoverage[oldReq];
+      changed = true;
+      if (nextCoverage[newReq] === undefined) nextCoverage[newReq] = value;
+    }
+    for (const [oldReq, dests] of fanOut) {
+      const value = s.coverage[oldReq];
+      if (value !== undefined) {
+        delete nextCoverage[oldReq];
+        changed = true;
+      }
+      if (value !== undefined && value !== "NONE") {
+        for (const newReq of dests) {
+          if (nextCoverage[newReq] === undefined) nextCoverage[newReq] = value;
+        }
+      }
+    }
+    // A destination that just received its first-ever link via fan-out, and
+    // still has no explicit status, gets the standard first-link promotion.
+    const fanOutDests = [...fanOut.values()].flat();
+    if (fanOutDests.length > 0) {
+      nextCoverage = autoPromoteCoverage(s.links, next, nextCoverage, fanOutDests);
+    }
+
     if (!changed) return;
-    set({ links: next, isDirty: true });
+    set({ links: next, coverage: nextCoverage, isDirty: true });
+  },
+
+  copyRequirementLinks(fromReq, toReq) {
+    if (fromReq === toReq) return;
+    const s = get();
+    const toCopy = s.links.filter((l) => l.req === fromReq);
+    const present = new Set(s.links.map((l) => JSON.stringify([l.tc, l.req])));
+    const additions: TraceLink[] = [];
+    for (const l of toCopy) {
+      const key = JSON.stringify([l.tc, toReq]);
+      if (present.has(key)) continue;
+      present.add(key);
+      additions.push({ tc: l.tc, req: toReq });
+    }
+    const nextLinks = additions.length > 0 ? [...s.links, ...additions] : s.links;
+
+    let nextCoverage = s.coverage;
+    const fromStatus = s.coverage[fromReq];
+    if (fromStatus !== undefined && fromStatus !== "NONE" && s.coverage[toReq] === undefined) {
+      nextCoverage = { ...s.coverage, [toReq]: fromStatus };
+    }
+    // Whether or not an explicit status was just copied, still apply the
+    // standard first-link promotion for a destination that had no links.
+    nextCoverage = autoPromoteCoverage(s.links, nextLinks, nextCoverage, [toReq]);
+
+    if (nextLinks === s.links && nextCoverage === s.coverage) return;
+    set({ links: nextLinks, coverage: nextCoverage, isDirty: true });
   },
 
   getFileData() {
-    const { testCases, links } = get();
-    return { version: 1, testCases, links };
+    const { testCases, links, coverage } = get();
+    return { version: 1, testCases, links, coverage };
   },
 }));

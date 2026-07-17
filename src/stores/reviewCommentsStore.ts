@@ -50,7 +50,35 @@ interface ReviewCommentsState {
   closeComment(reqId: string, commentId: string, closedBy: string): void;
   reopenComment(reqId: string, commentId: string): void;
 
-  renumberComments(oldId: string, newId: string): void;
+  /**
+   * Batch-migrates comment threads for a full requirement renumbering pass.
+   * Takes a rename LIST, not per-pair calls — a single old ID can legitimately
+   * appear more than once (a requirement duplicated via copy/paste shares one
+   * ID across several physical headings until renumbering assigns each its
+   * own new ID). Calling a single-pair move in a loop for that case silently
+   * empties the source after the first call, so every occurrence after the
+   * first ends up with no comments at all.
+   *
+   * Grouped by oldId, then handled per group:
+   * - ONE destination: the thread moves onto the new ID, merging with (never
+   *   overwriting) anything already there.
+   * - MULTIPLE destinations (a duplicated ID splitting apart): the thread
+   *   can't be split by occurrence, so it is COPIED onto every destination.
+   *
+   * Reads only the ORIGINAL snapshot, so overlapping renames (REQ_003→REQ_001
+   * while REQ_001→REQ_002) never cascade through intermediate results.
+   */
+  renumberComments(renames: readonly { oldId: string; newId: string }[]): void;
+
+  /**
+   * Duplicates one requirement's comment thread onto another WITHOUT
+   * touching the source — used when a duplicated heading is resolved by
+   * reassigning ONE occurrence to a fresh ID (the remaining occurrence(s)
+   * still bearing the original ID must keep everything they had; this is a
+   * copy, not a rename). Merges with, never overwrites, anything already at
+   * the destination. Mirrors traceabilityStore.copyRequirementLinks.
+   */
+  copyRequirementComments(fromReq: string, toReq: string): void;
 
   /**
    * Safely migrates review comments when a review target ID is renamed.
@@ -179,15 +207,62 @@ export const useReviewCommentsStore = create<ReviewCommentsState>((set, get) => 
     }));
   },
 
-  renumberComments(oldId, newId) {
-    set((s) => {
-      const existing = s.comments[oldId];
-      if (!existing) return s;
-      const { [oldId]: _removed, ...rest } = s.comments;
-      return {
-        comments: { ...rest, [newId]: existing },
-        isDirty: true,
-      };
+  renumberComments(renames) {
+    if (renames.length === 0) return;
+    const s = get();
+
+    // Self-pairs are KEPT at this stage — when one duplicate occurrence
+    // keeps its number while another diverges (REQ_001→REQ_001 and
+    // REQ_001→REQ_002 in the same batch), the self-pair is the only signal
+    // that REQ_001 was shared by two occurrences; dropping it here would
+    // collapse the group to a single destination and wrongly MOVE the
+    // thread away from the occurrence that never changed.
+    const byOld = new Map<string, string[]>();
+    for (const { oldId, newId } of renames) {
+      let dests = byOld.get(oldId);
+      if (!dests) {
+        dests = [];
+        byOld.set(oldId, dests);
+      }
+      if (!dests.includes(newId)) dests.push(newId);
+    }
+    // NOW drop true no-ops: a group whose only destination is the source itself.
+    for (const [oldId, dests] of byOld) {
+      if (dests.length === 1 && dests[0] === oldId) byOld.delete(oldId);
+    }
+    if (byOld.size === 0) return;
+
+    let changed = false;
+    const next: ReviewFile = {};
+    // Everything not being renamed away carries over untouched — including
+    // `_version` and any other non-array metadata key.
+    for (const [key, val] of Object.entries(s.comments)) {
+      if (!Array.isArray(val) || !byOld.has(key)) next[key] = val;
+    }
+
+    for (const [oldId, dests] of byOld) {
+      const sourceComments = s.comments[oldId] as ReviewComment[] | undefined;
+      if (!sourceComments || sourceComments.length === 0) continue;
+      changed = true;
+      for (const newId of dests) {
+        const existing = (next[newId] as ReviewComment[] | undefined) ?? [];
+        next[newId] = [...existing, ...sourceComments];
+      }
+    }
+
+    if (!changed) return;
+    set({ comments: next, isDirty: true });
+  },
+
+  copyRequirementComments(fromReq, toReq) {
+    if (fromReq === toReq) return;
+    const s = get();
+    const sourceComments = s.comments[fromReq] as ReviewComment[] | undefined;
+    if (!sourceComments || sourceComments.length === 0) return;
+    const existing = (s.comments[toReq] as ReviewComment[] | undefined) ?? [];
+    set({
+      comments: { ...s.comments, [toReq]: [...existing, ...sourceComments] },
+      isDirty: true,
     });
   },
 

@@ -3,6 +3,7 @@ import { useEditorState } from "@tiptap/react";
 import { EditorContext } from "@/editor/EditorContext";
 import { useUIStore, useTabStore, getActiveTab } from "@/stores";
 import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
+import { useTraceabilityStore } from "@/stores/traceabilityStore";
 
 function countWords(text: string): number {
   return text.trim() ? text.trim().split(/\s+/).length : 0;
@@ -13,12 +14,80 @@ function readingTime(words: number): string {
   return `${mins} min read`;
 }
 
+// ── Per-companion save-state indicator ──────────────────────────────────────
+//
+// One shared implementation for every companion artifact's StatusBar pill
+// (review comments, traceability, and any future sidecar) — each companion
+// only differs in its label/handlers/dirty-testid, not in markup or styling.
+// This is the "bottom status indicator = individual companion artifact save
+// state" half of the save UX; the separate global Unsaved/Saved pill further
+// down reflects the bundle/document save state instead.
+interface CompanionSaveIndicatorProps {
+  loaded: boolean;
+  dirty: boolean;
+  dirtyText: string;
+  dirtyTitle: string;
+  savedText: string;
+  savedTitle: string;
+  dirtyTestId: string;
+  savedTestId: string;
+  onSaveDirty?: () => void;
+  onSaveClean?: () => void;
+}
+
+function CompanionSaveIndicator({
+  loaded,
+  dirty,
+  dirtyText,
+  dirtyTitle,
+  savedText,
+  savedTitle,
+  dirtyTestId,
+  savedTestId,
+  onSaveDirty,
+  onSaveClean,
+}: CompanionSaveIndicatorProps) {
+  if (!loaded) return null;
+  return (
+    <>
+      {dirty ? (
+        <button
+          onClick={onSaveDirty}
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-amber-600 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-900/20 transition-colors"
+          title={dirtyTitle}
+          data-testid={dirtyTestId}
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+          {dirtyText}
+        </button>
+      ) : (
+        <button
+          onClick={onSaveClean}
+          className="rounded px-1.5 py-0.5 opacity-40 hover:opacity-100 hover:bg-[var(--color-border)] transition-all"
+          title={savedTitle}
+          data-testid={savedTestId}
+        >
+          {savedText}
+        </button>
+      )}
+      <span className="opacity-40">·</span>
+    </>
+  );
+}
+
 interface StatusBarProps {
   onSaveReview?: () => void;
   onSaveReviewAs?: () => void;
+  onSaveTraceability?: () => void;
+  onSaveTraceabilityAs?: () => void;
 }
 
-export function StatusBar({ onSaveReview, onSaveReviewAs }: StatusBarProps) {
+export function StatusBar({
+  onSaveReview,
+  onSaveReviewAs,
+  onSaveTraceability,
+  onSaveTraceabilityAs,
+}: StatusBarProps) {
   const editor = useContext(EditorContext);
   const sourceMode = useUIStore((s) => s.sourceMode);
   const toggleSourceMode = useUIStore((s) => s.toggleSourceMode);
@@ -31,6 +100,8 @@ export function StatusBar({ onSaveReview, onSaveReviewAs }: StatusBarProps) {
   const isReadOnly = useTabStore((s) => getActiveTab(s)?.isReadOnly ?? false);
   const reviewLoaded = useReviewCommentsStore((s) => s.loaded);
   const reviewIsDirty = useReviewCommentsStore((s) => s.isDirty);
+  const traceabilityLoaded = useTraceabilityStore((s) => s.loaded);
+  const traceabilityIsDirty = useTraceabilityStore((s) => s.isDirty);
 
   const stats = useEditorState({
     editor,
@@ -59,29 +130,30 @@ export function StatusBar({ onSaveReview, onSaveReviewAs }: StatusBarProps) {
       <span>{readingTime(words)}</span>
 
       <div className="ml-auto flex items-center gap-2">
-        {reviewLoaded && (
-          <>
-            {reviewIsDirty ? (
-              <button
-                onClick={onSaveReview}
-                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-amber-600 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-900/20 transition-colors"
-                title="Save review comments"
-              >
-                <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-                Unsaved Review Comments
-              </button>
-            ) : (
-              <button
-                onClick={onSaveReviewAs}
-                className="rounded px-1.5 py-0.5 opacity-40 hover:opacity-100 hover:bg-[var(--color-border)] transition-all"
-                title="Save review comments to a different file"
-              >
-                Review Saved
-              </button>
-            )}
-            <span className="opacity-40">·</span>
-          </>
-        )}
+        <CompanionSaveIndicator
+          loaded={reviewLoaded}
+          dirty={reviewIsDirty}
+          dirtyText="Unsaved Review Comments"
+          dirtyTitle="Save review comments"
+          savedText="Review Saved"
+          savedTitle="Save review comments to a different file"
+          dirtyTestId="statusbar-review-unsaved"
+          savedTestId="statusbar-review-saved"
+          onSaveDirty={onSaveReview}
+          onSaveClean={onSaveReviewAs}
+        />
+        <CompanionSaveIndicator
+          loaded={traceabilityLoaded}
+          dirty={traceabilityIsDirty}
+          dirtyText="Unsaved Traceability"
+          dirtyTitle="Save traceability"
+          savedText="Traceability Saved"
+          savedTitle="Save traceability to a different file"
+          dirtyTestId="statusbar-traceability-unsaved"
+          savedTestId="statusbar-traceability-saved"
+          onSaveDirty={onSaveTraceability}
+          onSaveClean={onSaveTraceabilityAs}
+        />
         {isReadOnly ? (
           <span className="rounded-sm bg-[var(--color-border)] px-1.5 py-px text-[9px] font-medium">
             Sample Document

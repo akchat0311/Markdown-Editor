@@ -22,6 +22,7 @@ import {
   summarizeTraceability,
 } from "@/layout/tabs/traceabilityRows";
 import type { TraceLink } from "@/types/traceability";
+import { COVERAGE_LABELS } from "@/types/traceability";
 import {
   ConfirmUnlinkDialog,
   LinkTestCaseDialog,
@@ -47,6 +48,7 @@ export function TraceabilityTab({
 
   const testCases = useTraceabilityStore((s) => s.testCases);
   const links = useTraceabilityStore((s) => s.links);
+  const coverage = useTraceabilityStore((s) => s.coverage);
   const isDirty = useTraceabilityStore((s) => s.isDirty);
   const loaded = useTraceabilityStore((s) => s.loaded);
   const loadError = useTraceabilityStore((s) => s.loadError);
@@ -67,8 +69,8 @@ export function TraceabilityTab({
 
   const requirementIds = useMemo(() => index?.requirements.map((r) => r.id) ?? [], [index]);
   const rows = useMemo(
-    () => buildTraceabilityRows(requirementIds, testCases, links),
-    [requirementIds, testCases, links],
+    () => buildTraceabilityRows(requirementIds, testCases, links, coverage),
+    [requirementIds, testCases, links, coverage],
   );
   const filteredRows = useMemo(() => filterTraceabilityRows(rows, query), [rows, query]);
   const brokenLinks = useMemo(
@@ -135,7 +137,7 @@ export function TraceabilityTab({
           .map((n) => matchRequirementId(n.label, compiled)?.id)
           .filter((id): id is string => id !== undefined)
       : [];
-    const csvRows = collectTraceabilityCsvRows(freshIds, testCases, links);
+    const csvRows = collectTraceabilityCsvRows(freshIds, testCases, links, coverage);
     const tab = getActiveTab(useTabStore.getState());
     const documentName = tab?.fileName ?? `${tab?.title ?? "document"}.md`;
     downloadTraceabilityCsv(generateTraceabilityCsv(csvRows), documentName);
@@ -322,8 +324,9 @@ export function TraceabilityTab({
               <table className="w-full table-fixed text-xs" data-testid="traceability-table">
                 <colgroup>
                   <col className="w-9" />
-                  <col className="w-[28%]" />
+                  <col className="w-[24%]" />
                   <col />
+                  <col className="w-24" />
                 </colgroup>
                 <thead className="sticky top-0 border-b border-[var(--color-border)] bg-[var(--color-paper)]">
                   <tr className="text-left text-[10px] font-semibold uppercase tracking-widest text-[var(--color-muted)]">
@@ -339,6 +342,7 @@ export function TraceabilityTab({
                     </th>
                     <th className="px-4 py-1.5">Requirement ID</th>
                     <th className="px-4 py-1.5">Test Cases</th>
+                    <th className="px-4 py-1.5">Coverage</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -401,6 +405,19 @@ export function TraceabilityTab({
                             </svg>
                           </button>
                         </div>
+                      </td>
+                      <td className="px-4 py-1.5" data-testid="coverage-cell">
+                        <span
+                          className={
+                            row.coverage === "FULL"
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : row.coverage === "PARTIAL"
+                                ? "text-amber-600 dark:text-amber-400"
+                                : "text-[var(--color-muted)]"
+                          }
+                        >
+                          {COVERAGE_LABELS[row.coverage]}
+                        </span>
                       </td>
                     </tr>
                   ))}

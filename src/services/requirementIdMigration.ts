@@ -33,16 +33,18 @@ export interface ReviewMigrationOutcome extends RequirementIdRename {
 export function migrateRequirementIdTargets(
   renames: readonly RequirementIdRename[],
 ): ReviewMigrationOutcome[] {
-  // Traceability: complete mapping, applied atomically. First occurrence wins
-  // when the same oldId appears twice (matches the review loop's behaviour,
-  // where the second migration finds the source already empty).
-  const traceMapping = new Map<string, string>();
-  for (const { oldId, newId } of renames) {
-    if (oldId === newId || traceMapping.has(oldId)) continue;
-    if (isSectionReviewTarget(oldId) || isSectionReviewTarget(newId)) continue;
-    traceMapping.set(oldId, newId);
-  }
-  useTraceabilityStore.getState().remapRequirementIds(traceMapping);
+  // Traceability: complete rename list, applied atomically. If the same
+  // oldId appears twice in one transaction (e.g. two headings changed at
+  // once), remapRequirementIds fans out correctly — links copy onto every
+  // destination rather than only the first-processed one. Self-pairs
+  // (newId === oldId) are intentionally NOT filtered out here: when they
+  // coexist with a genuine change for the same oldId, they're the only
+  // signal that the ID was shared by more than one occurrence — the store
+  // already no-ops correctly on a pair that is purely self-mapped.
+  const traceRenames = renames.filter(
+    ({ oldId, newId }) => !isSectionReviewTarget(oldId) && !isSectionReviewTarget(newId),
+  );
+  useTraceabilityStore.getState().remapRequirementIds(traceRenames);
 
   // Reviews: unchanged per-target migration; outcomes returned so the caller
   // can keep its existing conflict toasts.

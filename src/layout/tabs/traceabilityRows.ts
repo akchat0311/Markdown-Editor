@@ -1,6 +1,6 @@
 import { buildLinksByReq } from "@/services/traceabilityQuery";
 import type { BrokenLink } from "@/services/traceabilityQuery";
-import type { TestCase, TraceLink } from "@/types/traceability";
+import type { TestCase, TraceLink, CoverageStatus } from "@/types/traceability";
 
 // Pure row-model helpers for the Traceability tab. Kept out of the component
 // file so the tab stays fast-refreshable and the logic is unit-testable
@@ -11,6 +11,8 @@ export interface TraceabilityRow {
   reqId: string;
   /** Linked test cases in links-array order. */
   testCases: TestCase[];
+  /** Engineer-selected coverage status; defaults to "NONE" when unset. */
+  coverage: CoverageStatus;
 }
 
 /**
@@ -22,6 +24,7 @@ export function buildTraceabilityRows(
   requirementIds: string[],
   testCases: TestCase[],
   links: TraceLink[],
+  coverage: Record<string, CoverageStatus>,
 ): TraceabilityRow[] {
   const byReq = buildLinksByReq(testCases, links);
   const seen = new Set<string>();
@@ -29,7 +32,7 @@ export function buildTraceabilityRows(
   for (const reqId of requirementIds) {
     if (seen.has(reqId)) continue;
     seen.add(reqId);
-    rows.push({ reqId, testCases: byReq.get(reqId) ?? [] });
+    rows.push({ reqId, testCases: byReq.get(reqId) ?? [], coverage: coverage[reqId] ?? "NONE" });
   }
   return rows;
 }

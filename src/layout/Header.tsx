@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useUIStore, useTabStore, getActiveTab } from "@/stores";
 import { useUserSettingsStore } from "@/stores/userSettingsStore";
-import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
+import { useAnyCompanionDirty } from "@/persistence/useAnyCompanionDirty";
 import { getRecentFiles } from "@/persistence/recentFiles";
 import type { RecentFile } from "@/persistence/recentFiles";
 
@@ -18,8 +18,8 @@ function IconSidebar() {
 
 function IconMoon() {
   return (
-    <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor">
-      <path d="M2.89 1.9A6.5 6.5 0 1 0 13.1 12.1a5 5 0 0 1-10.2-10.2Z" />
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
     </svg>
   );
 }
@@ -230,9 +230,12 @@ export function Header({
   const tabState = useTabStore();
   const activeTab = getActiveTab(tabState);
   const setTabTitle = useTabStore((s) => s.setTabTitle);
-  const reviewLoaded = useReviewCommentsStore((s) => s.loaded);
-  const reviewDirty = useReviewCommentsStore((s) => s.isDirty);
-  const workspaceDirty = (activeTab?.isDirty ?? false) || (reviewLoaded && reviewDirty);
+  // True bundle-dirty state: markdown OR any loaded companion artifact
+  // (review, traceability, future ones) is dirty. Sourced from
+  // COMPANION_REGISTRY, not a hardcoded per-companion OR-chain — see
+  // useAnyCompanionDirty's doc comment for why that matters.
+  const anyCompanionDirty = useAnyCompanionDirty();
+  const workspaceDirty = (activeTab?.isDirty ?? false) || anyCompanionDirty;
 
   // Close export dropdown on outside click
   useEffect(() => {

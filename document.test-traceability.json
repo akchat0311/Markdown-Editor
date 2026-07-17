@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "testCases": [
+    {
+      "id": "TC_001",
+      "title": ""
+    },
+    {
+      "id": "TC_002",
+      "title": ""
+    }
+  ],
+  "links": [
+    {
+      "tc": "TC_002",
+      "req": "REQ_003"
+    },
+    {
+      "tc": "TC_001",
+      "req": "REQ_001"
+    },
+    {
+      "tc": "TC_001",
+      "req": "REQ_002"
+    }
+  ],
+  "coverage": {
+    "REQ_003": "PARTIAL",
+    "REQ_001": "PARTIAL",
+    "REQ_002": "PARTIAL"
+  }
+}

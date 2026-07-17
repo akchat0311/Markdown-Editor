@@ -1,10 +1,16 @@
 import { useState } from "react";
 import { useTraceabilityStore } from "@/stores/traceabilityStore";
 import { useRequirementTraceability } from "@/services/traceabilityQuery";
+import { COVERAGE_LABELS } from "@/types/traceability";
 import {
   LinkTestCaseDialog,
   TestCaseEditorDialog,
 } from "@/layout/traceability/TraceabilityDialogs";
+
+// Coverage above "No" requires linked test cases as evidence, so the
+// selector only offers Partial/Yes — "No" is the implicit state before any
+// test case is linked and the section is hidden entirely until then.
+const SELECTABLE_COVERAGE_STATUSES = ["PARTIAL", "FULL"] as const;
 
 /**
  * Contextual traceability panel for the editor's right workspace — opened by
@@ -17,6 +23,8 @@ import {
 export function TraceabilityDrawer({ reqId, onClose }: { reqId: string; onClose: () => void }) {
   const linked = useRequirementTraceability(reqId);
   const removeLink = useTraceabilityStore((s) => s.removeLink);
+  const coverage = useTraceabilityStore((s) => s.coverage[reqId] ?? "NONE");
+  const setCoverage = useTraceabilityStore((s) => s.setCoverage);
 
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [editTcId, setEditTcId] = useState<string | null>(null);
@@ -56,6 +64,34 @@ export function TraceabilityDrawer({ reqId, onClose }: { reqId: string; onClose:
           + Link Test Case…
         </button>
       </div>
+
+      {/* ── Coverage — only meaningful once there's evidence to assess ── */}
+      {linked.length > 0 && (
+        <div className="shrink-0 border-b border-[var(--color-border)] px-4 py-3">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">
+            Coverage
+          </p>
+          <div className="flex flex-col gap-1.5" role="radiogroup" aria-label="Verification coverage" data-testid="drawer-coverage">
+            {SELECTABLE_COVERAGE_STATUSES.map((status) => (
+              <label
+                key={status}
+                className="flex cursor-pointer items-center gap-2 text-xs text-[var(--color-text)]"
+                data-testid={`drawer-coverage-option-${status}`}
+              >
+                <input
+                  type="radio"
+                  name={`coverage-${reqId}`}
+                  checked={coverage === status}
+                  onChange={() => setCoverage(reqId, status)}
+                  className="accent-[var(--color-accent)]"
+                  data-testid={`drawer-coverage-radio-${status}`}
+                />
+                {COVERAGE_LABELS[status]}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Linked test cases ── */}
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">

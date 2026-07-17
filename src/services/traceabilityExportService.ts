@@ -1,18 +1,19 @@
 /**
  * Traceability CSV export.
  *
- * Format: two columns — Requirement ID, Test Cases. ONE row per requirement;
- * all linked test case IDs are aggregated into a single always-quoted cell,
- * separated by embedded newlines. Requirements with no links still appear
- * (empty quoted cell); broken links follow the valid rows, aggregated under
- * their stored requirement ID. Document order; links-array order within a
- * cell; IDs only, never titles.
+ * Format: three columns — Requirement ID, Test Cases, Coverage. ONE row per
+ * requirement; all linked test case IDs are aggregated into a single
+ * always-quoted cell, separated by embedded newlines. Requirements with no
+ * links still appear (empty quoted cell); broken links follow the valid
+ * rows, aggregated under their stored requirement ID. Document order;
+ * links-array order within a cell; IDs only, never titles. Coverage is the
+ * engineer-selected value (Yes/Partial/No) — never inferred here.
  *
- *   Requirement ID,Test Cases
- *   REQ_001,"TC_001"
+ *   Requirement ID,Test Cases,Coverage
+ *   REQ_001,"TC_001",Yes
  *   REQ_002,"TC_001
- *   TC_002"
- *   REQ_003,""
+ *   TC_002",Partial
+ *   REQ_003,"",No
  *
  * Callers must pass a FRESH document-order requirement ID list computed
  * synchronously at export time (never the debounced index — it can be 300 ms
@@ -22,19 +23,21 @@
 
 import { buildLinksByReq, findBrokenLinks } from "@/services/traceabilityQuery";
 import { csvCell, csvQuotedCell } from "@/services/csvUtils";
-import type { TestCase, TraceLink } from "@/types/traceability";
+import { COVERAGE_LABELS } from "@/types/traceability";
+import type { TestCase, TraceLink, CoverageStatus } from "@/types/traceability";
 
-export const TRACEABILITY_CSV_HEADER = ["Requirement ID", "Test Cases"];
+export const TRACEABILITY_CSV_HEADER = ["Requirement ID", "Test Cases", "Coverage"];
 
 /**
- * One [Requirement ID, aggregated test-case IDs] tuple per requirement, in
- * export order. The second element is the RAW newline-joined ID list ("" when
- * unlinked) — quoting happens in generateTraceabilityCsv.
+ * One [Requirement ID, aggregated test-case IDs, Coverage label] tuple per
+ * requirement, in export order. The second element is the RAW newline-joined
+ * ID list ("" when unlinked) — quoting happens in generateTraceabilityCsv.
  */
 export function collectTraceabilityCsvRows(
   requirementIds: string[],
   testCases: TestCase[],
   links: TraceLink[],
+  coverage: Record<string, CoverageStatus>,
 ): string[][] {
   const byReq = buildLinksByReq(testCases, links);
   const rows: string[][] = [];
@@ -46,7 +49,7 @@ export function collectTraceabilityCsvRows(
     if (seen.has(reqId)) continue;
     seen.add(reqId);
     const linked = byReq.get(reqId) ?? [];
-    rows.push([reqId, linked.map((tc) => tc.id).join("\n")]);
+    rows.push([reqId, linked.map((tc) => tc.id).join("\n"), COVERAGE_LABELS[coverage[reqId] ?? "NONE"]]);
   }
 
   // Broken links after all valid rows — aggregated per stored requirement ID,
@@ -58,7 +61,7 @@ export function collectTraceabilityCsvRows(
     brokenByReq.set(broken.req, list);
   }
   for (const [req, tcIds] of brokenByReq) {
-    rows.push([req, tcIds.join("\n")]);
+    rows.push([req, tcIds.join("\n"), COVERAGE_LABELS[coverage[req] ?? "NONE"]]);
   }
 
   return rows;
@@ -70,7 +73,7 @@ export function generateTraceabilityCsv(rows: string[][]): string {
     TRACEABILITY_CSV_HEADER.map(csvCell).join(","),
     // The Test Cases cell is quoted by contract — even when empty or a single
     // ID — because it is a multi-line aggregate column.
-    ...rows.map(([reqId, tcIds]) => `${csvCell(reqId)},${csvQuotedCell(tcIds)}`),
+    ...rows.map(([reqId, tcIds, coverageLabel]) => `${csvCell(reqId)},${csvQuotedCell(tcIds)},${csvCell(coverageLabel)}`),
   ];
   // UTF-8 BOM ensures Excel opens the file with correct encoding.
   return "﻿" + lines.join(CRLF) + CRLF;
