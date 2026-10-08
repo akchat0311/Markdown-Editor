@@ -6,10 +6,17 @@ import type { Node as PMNode } from "@tiptap/pm/model";
 import { useConfigStore } from "@/stores/configStore";
 import { useStatusConfigStore } from "@/stores/statusConfigStore";
 import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
-import { getRequirementStatuses, resolveRequirementStatus } from "@/services/requirementStatusService";
-import { compileRequirementPattern, matchRequirementId } from "@/editor/utils/requirementOps";
+import { getRequirementStatuses } from "@/services/requirementStatusService";
+import { compileRequirementPattern, matchRequirementId, collectDocumentVariants } from "@/editor/utils/requirementOps";
 import type { CompiledPattern } from "@/editor/utils/requirementOps";
-import { rewriteHeadingStatus, insertHeadingStatus } from "@/editor/utils/requirementHeadingOps";
+import {
+  rewriteHeadingStatus,
+  insertHeadingStatus,
+  rewriteHeadingVariant,
+  insertHeadingVariant,
+  removeHeadingVariant,
+} from "@/editor/utils/requirementHeadingOps";
+import { parseHeadingFields, variantDisplayText } from "@/editor/utils/headingFields";
 import type { RequirementStatus } from "@/types/requirementStatus";
 import type { ReviewComment } from "@/types/reviewComment";
 
@@ -118,6 +125,11 @@ interface StatusRange {
   statusId: string;
   nodePos: number;
   reqId: string;
+  /** Absolute positions of the [Variant] bracket, when present (D10). */
+  variantFrom: number | null;
+  variantTo: number | null;
+  /** Display text of the variant (emphasis stripped), when present. */
+  variantText: string | null;
 }
 
 function createDropdownWidget(
@@ -171,10 +183,10 @@ function createDropdownWidget(
       const currentNode = view.state.doc.nodeAt(range.nodePos);
       if (!currentNode || currentNode.type.name !== "heading") return;
       const { tr } = view.state;
-      const hasBracket = /\[[^\]]+\]\s*$/.test(currentNode.textContent);
-      if (hasBracket) {
-        rewriteHeadingStatus(tr, range.nodePos, currentNode, s.label);
-      } else {
+      // rewriteHeadingStatus targets the CLASSIFIED status bracket (a
+      // trailing variant is never overwritten) and reports false when the
+      // heading has no status bracket at all.
+      if (!rewriteHeadingStatus(tr, range.nodePos, currentNode, s.label)) {
         insertHeadingStatus(tr, range.nodePos, currentNode, s.label);
       }
       view.dispatch(tr);
@@ -280,6 +292,136 @@ function createDropdownWidget(
   };
 }
 
+// ── Variant chip widget (D10–D13) ─────────────────────────────────────────────
+
+/**
+ * Chip for the optional [Variant] bracket. Two modes:
+ *  - existing variant → chip shows the variant text; click edits it
+ *  - no variant (but a status is present) → a ghost "+ Variant" chip,
+ *    revealed on heading hover, that adds one
+ * Editing: with mdreq.variantVocabulary configured a dropdown (plus Remove)
+ * opens; otherwise an inline free-text input. Empty input removes the
+ * variant. All writes are token-level heading ops — nothing else in the
+ * heading is touched.
+ */
+function createVariantWidget(range: StatusRange): (view: EditorView) => HTMLElement {
+  return (view: EditorView) => {
+    const hasVariant = range.variantText !== null;
+
+    const container = document.createElement("span");
+    container.className = "req-variant-widget";
+    container.setAttribute("contenteditable", "false");
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `req-variant-btn${hasVariant ? "" : " req-variant-btn--add"}`;
+    btn.textContent = hasVariant ? range.variantText! : "+ Variant";
+    btn.title = hasVariant ? "Edit variant" : "Add variant";
+    btn.tabIndex = -1;
+    container.appendChild(btn);
+
+    const commit = (raw: string) => {
+      const text = raw.trim().replace(/[[\]]/g, "");
+      const node = view.state.doc.nodeAt(range.nodePos);
+      if (!node || node.type.name !== "heading") return;
+      const { tr } = view.state;
+      let changed = false;
+      if (!text) {
+        changed = hasVariant && removeHeadingVariant(tr, range.nodePos, node);
+      } else if (hasVariant) {
+        changed = text !== range.variantText && rewriteHeadingVariant(tr, range.nodePos, node, text);
+      } else {
+        insertHeadingVariant(tr, range.nodePos, node, text);
+        changed = true;
+      }
+      if (changed) view.dispatch(tr);
+      view.focus();
+    };
+
+    const startInput = () => {
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "req-variant-input";
+      input.value = hasVariant ? range.variantText! : "";
+      input.placeholder = "Variant";
+      btn.replaceWith(input);
+      input.focus();
+      input.select();
+      let done = false;
+      const finish = (apply: boolean) => {
+        if (done) return;
+        done = true;
+        if (apply) commit(input.value);
+        else {
+          input.replaceWith(btn);
+          view.focus();
+        }
+      };
+      input.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") { e.preventDefault(); finish(true); }
+        else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+      });
+      input.addEventListener("blur", () => finish(false));
+    };
+
+    const startMenu = (options: string[]) => {
+      const menu = document.createElement("ul");
+      menu.className = "req-status-menu";
+      menu.setAttribute("role", "listbox");
+      menu.setAttribute("aria-label", "Select variant");
+      // value: a variant to apply · "" removes · null opens the free-text
+      // input for a brand-new variant name.
+      const entries: Array<{ label: string; value: string | null }> = options.map((v) => ({ label: v, value: v }));
+      entries.push({ label: "＋ New variant…", value: null });
+      if (hasVariant) entries.push({ label: "✕ Remove variant", value: "" });
+      for (const entry of entries) {
+        const li = document.createElement("li");
+        li.className = "req-status-option";
+        li.setAttribute("role", "option");
+        li.setAttribute("aria-selected", String(entry.value !== null && entry.value === range.variantText));
+        li.textContent = entry.label;
+        li.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          closeMenu();
+          if (entry.value === null) startInput();
+          else commit(entry.value);
+        });
+        menu.appendChild(li);
+      }
+      let closePointerHandler: ((e: PointerEvent) => void) | null = null;
+      const closeMenu = () => {
+        menu.remove();
+        if (closePointerHandler) {
+          document.removeEventListener("pointerdown", closePointerHandler, { capture: true });
+          closePointerHandler = null;
+        }
+      };
+      container.appendChild(menu);
+      closePointerHandler = (e: PointerEvent) => {
+        if (!container.contains(e.target as Node)) closeMenu();
+      };
+      document.addEventListener("pointerdown", closePointerHandler, { capture: true });
+    };
+
+    btn.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // Menu options: variants already used in this document (document
+      // order) plus any configured vocabulary values not yet in use (user
+      // request, 2026-09-02). With no options at all, go straight to the
+      // free-text input.
+      const docVariants = collectDocumentVariants(view.state.doc);
+      const vocabulary = useConfigStore.getState().variantVocabulary;
+      const options = [...docVariants, ...vocabulary.filter((v) => !docVariants.includes(v))];
+      if (options.length > 0) startMenu(options);
+      else startInput();
+    });
+
+    return container;
+  };
+}
+
 // ── Auto-insert Draft for new requirements ────────────────────────────────────
 
 /**
@@ -328,10 +470,16 @@ function autoInsertDraftStatus(view: EditorView): void {
 
   if (pending.length === 0) return;
 
+  // Variant inheritance (user request, 2026-09-02): a newly typed
+  // requirement heading also receives the document's variant when exactly
+  // one distinct variant is in use.
+  const docVariants = collectDocumentVariants(state.doc);
+  const inheritedVariant = docVariants.length === 1 ? docVariants[0] : undefined;
+
   const tr = state.tr;
   for (let i = pending.length - 1; i >= 0; i--) {
     const { offset, node } = pending[i];
-    insertHeadingStatus(tr, offset, node, draftStatus.label);
+    insertHeadingStatus(tr, offset, node, draftStatus.label, inheritedVariant);
   }
   tr.setMeta("addToHistory", false);
   view.dispatch(tr);
@@ -351,23 +499,29 @@ function findStatusRange(
 
   const reqId = matched.id;
 
-  // Find the last `[...]` bracket group at end of heading text.
-  const bracketMatch = text.match(/(\[[^\]]+\])\s*$/);
+  // Shared trailing-bracket tokenizer (D11): classifies the [Status] and
+  // optional [Variant] groups in one pass.
+  const fields = parseHeadingFields(text, statuses);
 
-  if (!bracketMatch) {
+  if (!fields.status) {
     // Requirement heading with no status bracket — "missing status" case.
     const insertPos = nodePos + 1 + text.length;
-    return { bracketFrom: insertPos, bracketTo: null, statusId: "unknown", nodePos, reqId };
+    return {
+      bracketFrom: insertPos, bracketTo: null, statusId: "unknown", nodePos, reqId,
+      variantFrom: null, variantTo: null, variantText: null,
+    };
   }
 
-  const charOffset = text.lastIndexOf(bracketMatch[1]);
-  const bracketFrom = nodePos + 1 + charOffset;
-  const bracketTo = bracketFrom + bracketMatch[1].length;
-
-  const rawText = bracketMatch[1].slice(1, -1); // strip [ and ]
-  const statusId = resolveRequirementStatus(rawText, statuses);
-
-  return { bracketFrom, bracketTo, statusId, nodePos, reqId };
+  return {
+    bracketFrom: nodePos + 1 + fields.status.charFrom,
+    bracketTo: nodePos + 1 + fields.status.charTo,
+    statusId: fields.status.statusId,
+    nodePos,
+    reqId,
+    variantFrom: fields.variant ? nodePos + 1 + fields.variant.charFrom : null,
+    variantTo: fields.variant ? nodePos + 1 + fields.variant.charTo : null,
+    variantText: fields.variant ? variantDisplayText(fields.variant.inner) : null,
+  };
 }
 
 function buildDecorations(state: EditorState): DecorationSet {
@@ -415,6 +569,37 @@ function buildDecorations(state: EditorState): DecorationSet {
           bracketFrom,
           createDropdownWidget(range, statuses),
           { side: 1, key: `rs-missing-${nodePos}`, stopEvent: () => true }
+        )
+      );
+    }
+
+    // ── Variant chip (D10–D13) ────────────────────────────────────────────────
+    if (range.variantFrom !== null && range.variantTo !== null) {
+      const cursorInVariant = selFrom >= range.variantFrom && selTo <= range.variantTo;
+      if (cursorInVariant) {
+        decorations.push(
+          Decoration.inline(range.variantFrom, range.variantTo, { class: "req-status-editing" })
+        );
+      } else {
+        decorations.push(
+          Decoration.inline(range.variantFrom, range.variantTo, { class: "req-status-source-hidden" })
+        );
+        decorations.push(
+          Decoration.widget(
+            range.variantFrom,
+            createVariantWidget(range),
+            { side: -1, key: `rv-${range.variantFrom}-${range.variantText}`, stopEvent: () => true }
+          )
+        );
+      }
+    } else if (bracketTo !== null) {
+      // Requirement with a status but no variant: ghost "+ Variant" chip,
+      // revealed on heading hover (CSS). Placed after the status bracket.
+      decorations.push(
+        Decoration.widget(
+          bracketTo,
+          createVariantWidget(range),
+          { side: 2, key: `rv-add-${nodePos}`, stopEvent: () => true }
         )
       );
     }

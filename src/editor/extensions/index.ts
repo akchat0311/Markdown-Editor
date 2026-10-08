@@ -37,11 +37,20 @@ const FindReplaceExtension = Extension.create({
   },
 });
 
-export function createEditorExtensions(): Extensions {
+export interface EditorExtensionOptions {
+  /**
+   * Set false to disable TipTap's own undo/redo (VS Code webview: the
+   * TextDocument owns the single undo stack — architecture D5).
+   */
+  undoRedo?: boolean;
+}
+
+export function createEditorExtensions(options: EditorExtensionOptions = {}): Extensions {
   return [
     StarterKit.configure({
       link: { openOnClick: false, autolink: true, linkOnPaste: true },
       heading: { levels: [1, 2, 3, 4, 5, 6] },
+      ...(options.undoRedo === false ? { undoRedo: false as const } : {}),
       // Disable StarterKit's plain codeBlock — MermaidCodeBlock replaces it
       codeBlock: false,
       // Disable built-in list extensions — SpreadBulletList / SpreadOrderedList /

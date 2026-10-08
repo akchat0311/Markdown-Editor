@@ -3,7 +3,8 @@ import { useEditor } from "@tiptap/react";
 import { EditorContext } from "@/editor/EditorContext";
 import { EditorMain } from "@/editor/EditorMain";
 import { createEditorExtensions } from "@/editor/extensions";
-import { parseMarkdownToDoc, serializeDocToMarkdown } from "@/markdown";
+import { markdownToEditorDoc, editorDocToMarkdown } from "@/markdown/editorDoc";
+import { SoftBreak } from "@/editor/extensions/SoftBreak";
 import { useTabStore, useUIStore, getActiveTab } from "@/stores";
 import { useToastStore } from "@/stores/toastStore";
 import { useStatusConfigStore } from "@/stores/statusConfigStore";
@@ -61,7 +62,10 @@ import { useValidationStore } from "@/stores/validationStore";
 
 // Module-level stable extensions prevent Tiptap compareOptions from
 // calling setOptions() synchronously during React's render phase.
-const EDITOR_EXTENSIONS = createEditorExtensions();
+// SoftBreak keeps raw "\n" out of the editable DOM: markdownToEditorDoc expands
+// paragraph newlines into softBreak nodes and editorDocToMarkdown collapses
+// them back (see src/markdown/editorDoc.ts).
+const EDITOR_EXTENSIONS = [...createEditorExtensions(), SoftBreak];
 
 interface CloseConfirm {
   tabId: string;
@@ -117,7 +121,7 @@ export default function App() {
   const [findShowReplace, setFindShowReplace] = useState(false);
   const [activeWorkspace, setActiveWorkspace] = useState<"editor" | "dashboard">("editor");
 
-  const initialDoc = parseMarkdownToDoc(activeTab?.markdown ?? "");
+  const initialDoc = markdownToEditorDoc(activeTab?.markdown ?? "");
 
   const editor = useEditor({
     extensions: EDITOR_EXTENSIONS,
@@ -134,8 +138,12 @@ export default function App() {
       if (state.tabs.find((t) => t.id === tabId)?.isReadOnly) return;
       const json = editor.getJSON();
       queueMicrotask(() => {
-        useTabStore.getState().updateTab(tabId, {
-          markdown: serializeDocToMarkdown(json),
+        const store = useTabStore.getState();
+        // The tab's current markdown is the "previous source": only blocks
+        // that actually changed are re-emitted in canonical style (D9).
+        const previous = store.tabs.find((t) => t.id === tabId)?.markdown;
+        store.updateTab(tabId, {
+          markdown: editorDocToMarkdown(json, previous),
           isDirty: true,
         });
       });
@@ -172,7 +180,7 @@ export default function App() {
       const departing = store.tabs.find((t) => t.id === departingTabId);
       if (departing && !departing.isReadOnly) {
         store.updateTab(departingTabId, {
-          markdown: serializeDocToMarkdown(editor.getJSON()),
+          markdown: editorDocToMarkdown(editor.getJSON(), departing.markdown),
           isDirty: true,
         });
       }
@@ -186,7 +194,7 @@ export default function App() {
       // editor to Tab A's content — which would then be saved to Tab B's file.
       // preventUpdate:true suppresses the onUpdate emission; isLoadingContentRef
       // is kept as a secondary guard for other code paths.
-      const json = parseMarkdownToDoc(activeTab.markdown);
+      const json = markdownToEditorDoc(activeTab.markdown);
       const newDoc = editor.schema.nodeFromJSON(json);
       const tr = editor.state.tr
         .replaceWith(0, editor.state.doc.content.size, newDoc.content)
@@ -211,7 +219,7 @@ export default function App() {
     const tab = getActiveTab(useTabStore.getState());
     if (!tab || tab.isReadOnly) return;
     isLoadingContentRef.current = true;
-    const json = parseMarkdownToDoc(tab.markdown);
+    const json = markdownToEditorDoc(tab.markdown);
     const newDoc = editor.schema.nodeFromJSON(json);
     const tr = editor.state.tr
       .replaceWith(0, editor.state.doc.content.size, newDoc.content)
@@ -240,7 +248,7 @@ export default function App() {
         useTabStore.getState().updateTab(welcomeTabId, { markdown });
         isLoadingContentRef.current = true;
         setTimeout(() => {
-          editor.commands.setContent(parseMarkdownToDoc(markdown));
+          editor.commands.setContent(markdownToEditorDoc(markdown));
           setTimeout(() => { isLoadingContentRef.current = false; }, 0);
         }, 0);
       })
@@ -387,7 +395,7 @@ export default function App() {
       if (editor) {
         isLoadingContentRef.current = true;
         setTimeout(() => {
-          editor.commands.setContent(parseMarkdownToDoc(content));
+          editor.commands.setContent(markdownToEditorDoc(content));
           setTimeout(() => { isLoadingContentRef.current = false; }, 0);
         }, 0);
       }
@@ -442,7 +450,7 @@ export default function App() {
   const closeInlineDrawer = useCommentDrawerStore((s) => s.close);
 
   const inlineDrawerRecord: RequirementRecord | null = inlineDrawerReqId
-    ? { id: inlineDrawerReqId, status: inlineDrawerStatus, section: "", pmPos: 0, title: "" }
+    ? { id: inlineDrawerReqId, status: inlineDrawerStatus, section: "", pmPos: 0, title: "", variant: null }
     : null;
 
   // ── Traceability panel (right workspace, opened from 🧪 badges) ──────────────
@@ -823,7 +831,7 @@ export default function App() {
     if (editor) {
       isLoadingContentRef.current = true;
       setTimeout(() => {
-        editor.commands.setContent(parseMarkdownToDoc(result.content));
+        editor.commands.setContent(markdownToEditorDoc(result.content));
         setTimeout(() => { isLoadingContentRef.current = false; }, 0);
       }, 0);
     }
@@ -897,7 +905,7 @@ export default function App() {
     if (editor) {
       isLoadingContentRef.current = true;
       setTimeout(() => {
-        editor.commands.setContent(parseMarkdownToDoc(content));
+        editor.commands.setContent(markdownToEditorDoc(content));
         setTimeout(() => { isLoadingContentRef.current = false; }, 0);
       }, 0);
     }
@@ -1034,7 +1042,7 @@ export default function App() {
         if (editor) {
           isLoadingContentRef.current = true;
           setTimeout(() => {
-            editor.commands.setContent(parseMarkdownToDoc(content));
+            editor.commands.setContent(markdownToEditorDoc(content));
             setTimeout(() => { isLoadingContentRef.current = false; }, 0);
           }, 0);
         }

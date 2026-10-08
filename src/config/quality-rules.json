@@ -40,7 +40,15 @@
       "severity": "warning",
       "title": "Weak Modal Verbs",
       "description": "Mandatory requirements should use SHALL. Weak modals such as 'should' or 'may' make obligations unclear and harder to verify.",
-      "terms": ["should", "may", "can", "could", "might", "would", "ought to"],
+      "terms": [
+        "should",
+        "may",
+        "can",
+        "could",
+        "might",
+        "would",
+        "ought to"
+      ],
       "message": "{id}: '{term}' found — use SHALL for mandatory requirements."
     },
     "ambiguousWords": {
@@ -51,9 +59,19 @@
       "title": "Ambiguous Words",
       "description": "Vague terms make requirements difficult to verify. Replace with measurable, testable criteria.",
       "terms": [
-        "appropriate", "adequate", "sufficient", "reasonable", "as necessary",
-        "flexible", "extensible", "robust", "fast", "user-friendly", "easy",
-        "simple", "etc."
+        "appropriate",
+        "adequate",
+        "sufficient",
+        "reasonable",
+        "as necessary",
+        "flexible",
+        "extensible",
+        "robust",
+        "fast",
+        "user-friendly",
+        "easy",
+        "simple",
+        "etc."
       ],
       "message": "{id}: Ambiguous term '{term}' — replace with a measurable criterion."
     },
@@ -64,7 +82,14 @@
       "severity": "error",
       "title": "Forbidden Terms",
       "description": "Placeholder terms indicate incomplete requirements that must be resolved before release.",
-      "terms": ["TBD", "TBC", "FIXME", "TODO", "placeholder", "N/A"],
+      "terms": [
+        "TBD",
+        "TBC",
+        "FIXME",
+        "TODO",
+        "placeholder",
+        "N/A"
+      ],
       "message": "{id}: Forbidden term '{term}' must be resolved before release."
     },
     "wordCount": {
@@ -135,7 +160,13 @@
       "severity": "warning",
       "title": "Undefined Acronyms",
       "description": "Acronyms should be defined before first use. Define with the pattern: Full Name (ACRONYM).",
-      "ignored": ["TBD", "TBC", "TODO", "REQ", "ID"],
+      "ignored": [
+        "TBD",
+        "TBC",
+        "TODO",
+        "REQ",
+        "ID"
+      ],
       "message": "{id}: '{term}' appears to be an undefined acronym. Define it as: Full Name ({term})."
     },
     "multipleSentences": {
@@ -209,6 +240,14 @@
       "title": "Unbalanced Parentheses",
       "description": "Every opening parenthesis should have a matching closing parenthesis.",
       "message": "{id}: unbalanced parentheses."
+    },
+    "unknownVariant": {
+      "id": "unknownVariant",
+      "category": "consistency",
+      "enabled": true,
+      "severity": "warning",
+      "title": "Unknown Variant",
+      "description": "When a variant vocabulary is configured, each requirement's [Variant] bracket must use a value from it."
     }
   }
 }

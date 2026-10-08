@@ -22,6 +22,8 @@
 
 import type { Transaction } from "@tiptap/pm/state";
 import type { Node as PMNode, Mark } from "@tiptap/pm/model";
+import { parseHeadingFields } from "@/editor/utils/headingFields";
+import { getRequirementStatuses } from "@/services/requirementStatusService";
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -95,10 +97,46 @@ export function rewriteHeadingStatus(
   headingNode: PMNode,
   newLabel: string,
 ): boolean {
-  const range = bracketCharRange(headingNode.textContent);
-  if (!range) return false;
+  // Target the CLASSIFIED status bracket, never simply the last bracket —
+  // once a heading carries a variant ("ID [*Draft*] [V2]"), the last
+  // bracket is the variant and a blind rewrite would overwrite it (D11).
+  const fields = parseHeadingFields(headingNode.textContent, getRequirementStatuses());
+  if (!fields.status) return false;
+  rewriteBracketAt(tr, headingPos, fields.status.charFrom, fields.status.charTo, newLabel, true);
+  return true;
+}
 
-  const [charFrom, charTo] = range;
+/**
+ * Replaces the [Variant] bracket of a requirement heading, preserving any
+ * inline marks on the previous variant text. Variants are written plain by
+ * default (design D10) — no italic is added.
+ * Returns false when the heading has no variant bracket.
+ */
+export function rewriteHeadingVariant(
+  tr: Transaction,
+  headingPos: number,
+  headingNode: PMNode,
+  newText: string,
+): boolean {
+  const fields = parseHeadingFields(headingNode.textContent, getRequirementStatuses());
+  if (!fields.variant) return false;
+  rewriteBracketAt(tr, headingPos, fields.variant.charFrom, fields.variant.charTo, newText, false);
+  return true;
+}
+
+/**
+ * Shared token rewrite: replaces the bracket group at [charFrom, charTo)
+ * with "[newLabel]", carrying over the marks found on the previous inner
+ * label text (plus italic when defaultItalic is set and not already there).
+ */
+function rewriteBracketAt(
+  tr: Transaction,
+  headingPos: number,
+  charFrom: number,
+  charTo: number,
+  newLabel: string,
+  defaultItalic: boolean,
+): void {
   const absFrom = headingPos + 1 + charFrom;
   const absTo   = headingPos + 1 + charTo;
 
@@ -112,33 +150,102 @@ export function rewriteHeadingStatus(
     innerPos < absTo ? marksAt(tr, innerPos) : [];
 
   const { schema } = tr.doc.type;
-  const nodes: PMNode[] =
-    innerMarks.length > 0
-      ? [
-          schema.text("["),
-          schema.text(newLabel, [...innerMarks]),
-          schema.text("]"),
-        ]
-      : [schema.text("[" + newLabel + "]")];
+  // Statuses render italic by default ("[*Draft*]" in markdown); preserve any
+  // additional marks the previous label carried.
+  const italic = schema.marks.italic;
+  const labelMarks = [...innerMarks];
+  if (defaultItalic && italic && !labelMarks.some((m) => m.type === italic)) {
+    labelMarks.push(italic.create());
+  }
+  const nodes: PMNode[] = [
+    schema.text("["),
+    schema.text(newLabel, labelMarks),
+    schema.text("]"),
+  ];
 
   tr.replaceWith(absFrom, absTo, nodes);
-  return true;
 }
 
 /**
- * Appends a new [Status] bracket to a heading that currently has none.
- * Inserted as plain text — there is no prior formatting to preserve.
+ * Inserts a new [Status] bracket into a heading that currently has none.
+ * The label is italic by default ("[*Draft*]" in markdown); the brackets
+ * stay plain. When the heading carries a variant bracket the status is
+ * inserted BEFORE it (canonical order "[Status] [Variant]", D10); with no
+ * variant it is appended at the end. (A heading with a variant but no
+ * status cannot parse — a single bracket is always the status — but the
+ * ordering rule keeps the op safe under any future grammar change.)
  */
 export function insertHeadingStatus(
   tr: Transaction,
   headingPos: number,
   headingNode: PMNode,
   label: string,
+  variant?: string,
 ): void {
   // Use replaceWith rather than insertText: insertText inherits the marks
   // active at the insertion position (e.g. italic from the preceding ID text),
   // while replaceWith uses the marks of the supplied content node — none here.
   const { schema } = tr.doc.type;
+  const italic = schema.marks.italic;
+  const labelMarks = italic ? [italic.create()] : [];
+  const text = headingNode.textContent;
+  const fields = parseHeadingFields(text, getRequirementStatuses());
+  if (fields.variant && !fields.status) {
+    const at = headingPos + 1 + fields.variant.charFrom;
+    tr.replaceWith(at, at, [
+      schema.text("["),
+      schema.text(label, labelMarks),
+      schema.text("] "),
+    ]);
+    return;
+  }
+  const insertAt = headingPos + 1 + text.length;
+  const nodes = [
+    schema.text(" ["),
+    schema.text(label, labelMarks),
+    schema.text("]"),
+  ];
+  // Optional inherited variant, appended plain in the same token insert
+  // (canonical order [Status] [Variant]; one undo step).
+  if (variant) {
+    nodes.push(schema.text(" ["), schema.text(variant), schema.text("]"));
+  }
+  tr.replaceWith(insertAt, insertAt, nodes);
+}
+
+/**
+ * Appends a new [Variant] bracket at the end of the heading (canonical
+ * order puts the variant last — D10). Written plain, no italic.
+ */
+export function insertHeadingVariant(
+  tr: Transaction,
+  headingPos: number,
+  headingNode: PMNode,
+  text: string,
+): void {
+  const { schema } = tr.doc.type;
   const insertAt = headingPos + 1 + headingNode.textContent.length;
-  tr.replaceWith(insertAt, insertAt, schema.text(" [" + label + "]"));
+  tr.replaceWith(insertAt, insertAt, [
+    schema.text(" ["),
+    schema.text(text),
+    schema.text("]"),
+  ]);
+}
+
+/**
+ * Deletes the [Variant] bracket (plus the whitespace before it) from a
+ * heading. Returns false when there is no variant bracket.
+ */
+export function removeHeadingVariant(
+  tr: Transaction,
+  headingPos: number,
+  headingNode: PMNode,
+): boolean {
+  const content = headingNode.textContent;
+  const fields = parseHeadingFields(content, getRequirementStatuses());
+  if (!fields.variant) return false;
+  let charFrom = fields.variant.charFrom;
+  while (charFrom > 0 && /\s/.test(content[charFrom - 1])) charFrom--;
+  tr.delete(headingPos + 1 + charFrom, headingPos + 1 + fields.variant.charTo);
+  return true;
 }

@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useRef, useState } from "react";
 import type { Editor } from "@tiptap/core";
-import { serializeDocToMarkdown, parseMarkdownToDoc } from "@/markdown";
+import { editorDocToMarkdown, markdownToEditorDoc } from "@/markdown/editorDoc";
 import { useTabStore } from "@/stores/tabStore";
 
 interface SourcePaneProps {
@@ -35,7 +35,7 @@ export const SourcePane = forwardRef<HTMLTextAreaElement, SourcePaneProps>(funct
     if (!active) return;
     const tab = useTabStore.getState().tabs.find((t) => t.id === activeTabId);
     // Fallback to serialising TipTap only if no store entry exists yet (edge case).
-    setText(tab?.markdown ?? serializeDocToMarkdown(editor.getJSON()));
+    setText(tab?.markdown ?? editorDocToMarkdown(editor.getJSON()));
   }, [active, activeTabId, editor]);
 
   // ── Live sync from external changes (e.g. rich-editor edits while this ─────
@@ -131,7 +131,7 @@ export const SourcePane = forwardRef<HTMLTextAreaElement, SourcePaneProps>(funct
         // could be active; that guard no longer holds once this pane can be
         // visible at the same time as the rich editor (split view), so the
         // suppression now has to be explicit here instead of implicit there.
-        editor.commands.setContent(parseMarkdownToDoc(freshest), { emitUpdate: false });
+        editor.commands.setContent(markdownToEditorDoc(freshest), { emitUpdate: false });
       }, 250);
     },
     [editor],

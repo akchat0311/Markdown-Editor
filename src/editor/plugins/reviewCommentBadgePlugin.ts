@@ -5,7 +5,8 @@ import type { Node as PMNode } from "@tiptap/pm/model";
 import { useConfigStore } from "@/stores/configStore";
 import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
 import { useCommentDrawerStore } from "@/stores/commentDrawerStore";
-import { getRequirementStatuses, resolveRequirementStatus } from "@/services/requirementStatusService";
+import { getRequirementStatuses } from "@/services/requirementStatusService";
+import { parseHeadingFields } from "@/editor/utils/headingFields";
 import { compileRequirementPattern, matchRequirementId } from "@/editor/utils/requirementOps";
 import { extractSectionNumber, sectionReviewId } from "@/editor/utils/sectionReviewOps";
 import type { ReviewComment } from "@/types/reviewComment";
@@ -121,20 +122,18 @@ function buildDecorations(editorState: EditorState): DecorationSet {
       const matched = matchRequirementId(text, compiled);
       if (matched) {
         const reqId = matched.id;
-        const bracketMatch = text.match(/(\[[^\]]+\])\s*$/);
-        const rawStatus = bracketMatch ? bracketMatch[1].slice(1, -1).trim() : "";
-        const statusId = rawStatus
-          ? resolveRequirementStatus(rawStatus, statuses)
-          : "unknown";
+        const fields = parseHeadingFields(text, statuses);
+        const statusId = fields.status?.statusId ?? "unknown";
         const reqComments = (comments[reqId] as ReviewComment[]) ?? [];
         const bState = badgeState(reqComments);
         // Badge position:
-        //   WITH status bracket → after the hidden [Status] span (side: 1)
-        //   WITHOUT status bracket → after the "Set Status" widget (side: 2)
-        const badgePos = bracketMatch
-          ? nodePos + 1 + text.lastIndexOf(bracketMatch[1]) + bracketMatch[1].length
-          : nodePos + 1 + text.length;
-        const badgeSide = bracketMatch ? 1 : 2;
+        //   WITH field brackets → after the LAST hidden bracket span
+        //   (the variant when present, else the status) (side: 1)
+        //   WITHOUT any bracket → after the "Set Status" widget (side: 2)
+        const lastFieldTo = fields.variant?.charTo ?? fields.status?.charTo ?? null;
+        const badgePos =
+          lastFieldTo !== null ? nodePos + 1 + lastFieldTo : nodePos + 1 + text.length;
+        const badgeSide = lastFieldTo !== null ? 1 : 2;
         decorations.push(
           Decoration.widget(badgePos, createBadgeWidget(reqId, statusId, reqComments), {
             side: badgeSide,
@@ -147,9 +146,15 @@ function buildDecorations(editorState: EditorState): DecorationSet {
     }
 
     // ── Section badge ─────────────────────────────────────────────────────────
+    // Every heading is reviewable, not only requirement matches: numbered
+    // headings key by their dotted number ("section:2.1"); unnumbered ones
+    // key by their text ("section:Callouts"). Renaming a heading orphans its
+    // comments — consistent with the sidecar design: broken links are
+    // preserved, never deleted.
     const sectionNum = extractSectionNumber(text);
-    if (sectionNum) {
-      const targetId = sectionReviewId(sectionNum);
+    const sectionKey = sectionNum ?? text.trim();
+    if (sectionKey) {
+      const targetId = sectionReviewId(sectionKey);
       const sectionComments = (comments[targetId] as ReviewComment[]) ?? [];
       const bState = badgeState(sectionComments);
       decorations.push(

@@ -27,6 +27,10 @@ interface LegacyRequirementPattern {
 
 interface ConfigState {
   requirementPattern: RequirementPattern | null;
+  /** Configured variant vocabulary (mdreq.variantVocabulary). Empty array =
+   *  variants are free text: no dropdown, no unknown-variant rule (D12). */
+  variantVocabulary: string[];
+  setVariantVocabulary(vocabulary: string[]): void;
   /** Simple mode: derives prefix + digit width from one example ID. */
   setRequirementPattern(example: string): void;
   /** Regex mode: caller is responsible for validating first (see
@@ -45,6 +49,9 @@ export const useConfigStore = create<ConfigState>()(
   persist(
     (set) => ({
       requirementPattern: null,
+      variantVocabulary: [],
+      setVariantVocabulary: (vocabulary) =>
+        set({ variantVocabulary: vocabulary.map((v) => v.trim()).filter(Boolean) }),
       setRequirementPattern: (example) =>
         set({ requirementPattern: { mode: "simple", example: example.trim() } }),
       setRequirementRegexPattern: (source, flags = "") =>

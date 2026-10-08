@@ -2,8 +2,10 @@ import type { JSONContent } from "@tiptap/core";
 import type { OutlineNode } from "@/types/outline";
 import type { RequirementStatus } from "@/types/requirementStatus";
 import type { RequirementPattern } from "@/stores/configStore";
-import { getNodeSectionRange, getSectionRange, renameHeading } from "@/editor/utils/outlineOps";
-import { resolveRequirementStatus } from "@/services/requirementStatusService";
+import { getNodeSectionRange, getSectionRange, renameHeading, statusBracketNodes } from "@/editor/utils/outlineOps";
+import { parseHeadingFields, fieldsStartOffset, variantDisplayText } from "@/editor/utils/headingFields";
+import { getRequirementStatuses } from "@/services/requirementStatusService";
+import { useConfigStore } from "@/stores/configStore";
 
 // ── Pattern derivation ────────────────────────────────────────────────────────
 
@@ -404,6 +406,41 @@ export function analyzeRequirements(
   return { requirements, duplicates, missing, countsBySection };
 }
 
+// ── Document variants ─────────────────────────────────────────────────────────
+
+/**
+ * Distinct [Variant] values carried by the document's requirement headings,
+ * in document order (user feature request, 2026-09-02: new requirements
+ * inherit the document's variant).
+ *
+ * Self-contained: reads the requirement pattern from configStore and the
+ * status vocabulary from the status service, so widgets and commands can
+ * call it with just the PM doc. Returns [] when no pattern is configured.
+ */
+export function collectDocumentVariants(doc: {
+  descendants: (cb: (node: { type: { name: string }; textContent: string }, pos: number) => void) => void;
+}): string[] {
+  const { requirementPattern } = useConfigStore.getState();
+  const compiled = compileRequirementPattern(requirementPattern);
+  if (!compiled) return [];
+  const statuses = getRequirementStatuses();
+  const seen = new Set<string>();
+  const out: string[] = [];
+  doc.descendants((node) => {
+    if (node.type.name !== "heading") return;
+    const text = node.textContent;
+    if (!matchRequirementId(text, compiled)) return;
+    const fields = parseHeadingFields(text, statuses);
+    if (!fields.variant) return;
+    const display = variantDisplayText(fields.variant.inner);
+    if (display && !seen.has(display)) {
+      seen.add(display);
+      out.push(display);
+    }
+  });
+  return out;
+}
+
 // ── Requirements Index ────────────────────────────────────────────────────────
 
 export interface RequirementRecord {
@@ -414,8 +451,10 @@ export interface RequirementRecord {
   section: string;
   /** ProseMirror absolute offset for click-to-navigate. */
   pmPos: number;
-  /** Heading label with ID prefix and optional " [Status]" suffix stripped. */
+  /** Heading label with ID prefix and trailing field brackets stripped. */
   title: string;
+  /** Display text of the [Variant] bracket (D10–D13), or null when absent. */
+  variant: string | null;
 }
 
 export interface RequirementIndex {
@@ -497,18 +536,19 @@ export function buildRequirementIndex(
       const matched = matchByKey.get(node.key)!;
       const { id, matchLength } = matched;
 
-      const rawStatusText = extractStatusText(rawLabel);
-      const status = rawStatusText
-        ? resolveRequirementStatus(rawStatusText, statuses)
-        : "unknown";
+      // Shared trailing-bracket tokenizer (D11): classifies [Status] and
+      // the optional [Variant] in one pass.
+      const fields = parseHeadingFields(rawLabel, statuses);
+      const status = fields.status?.statusId ?? "unknown";
+      const variant = fields.variant ? variantDisplayText(fields.variant.inner) : null;
 
-      // Derive title: strip the matched ID portion and optional " [Status]"
-      // suffix from the label. Uses matchLength (full match), not id.length,
-      // since regex mode's capture group may be shorter than the full match
-      // (e.g. a literal prefix outside the capturing group).
-      const titleRaw = rawLabel.slice(matchLength).replace(/\s*\[[^\]]*\]\s*$/, "").trim();
+      // Derive title: strip the matched ID portion and the trailing field
+      // brackets from the label. Uses matchLength (full match), not
+      // id.length, since regex mode's capture group may be shorter than the
+      // full match (e.g. a literal prefix outside the capturing group).
+      const titleRaw = rawLabel.slice(matchLength, fieldsStartOffset(rawLabel, fields)).trim();
 
-      requirements.push({ id, status, section, pmPos: node.pmPos, title: titleRaw });
+      requirements.push({ id, status, section, pmPos: node.pmPos, title: titleRaw, variant });
     }
   }
 
@@ -563,6 +603,68 @@ export function computeRenumberReplacements(
   });
 }
 
+/**
+ * Splits an ID into its stem and trailing number: "TRANS_Parking_007" →
+ * { stem: "TRANS_Parking_", num: 7, width: 3 }. Returns null when the ID has
+ * no trailing digit run (such IDs cannot be renumbered).
+ */
+export function splitIdNumericTail(
+  id: string,
+): { stem: string; num: number; width: number } | null {
+  const m = /^(.*?)(\d+)$/.exec(id);
+  if (!m) return null;
+  return { stem: m[1], num: parseInt(m[2], 10), width: m[2].length };
+}
+
+/**
+ * Regex-mode renumbering: group requirements by ID stem (everything before
+ * the trailing number — for TRANS_<Feature>_NNN conventions the stem embeds
+ * the feature segment) and renumber each group 1..n in document order,
+ * keeping each group's digit width (the width of its first occurrence,
+ * widened if the count outgrows it). IDs without a trailing digit run are
+ * left untouched.
+ */
+export function computeStemRenumberReplacements(
+  requirements: RequirementEntry[],
+): RenumberReplacement[] {
+  const counters = new Map<string, { next: number; width: number }>();
+  const replacements: RenumberReplacement[] = [];
+  for (const entry of requirements) {
+    const split = splitIdNumericTail(entry.id);
+    if (!split) continue;
+    let group = counters.get(split.stem);
+    if (!group) {
+      group = { next: 1, width: split.width };
+      counters.set(split.stem, group);
+    }
+    const numText = String(group.next).padStart(group.width, "0");
+    const newId = split.stem + numText;
+    group.next += 1;
+    const suffix = entry.node.label.slice(entry.id.length);
+    replacements.push({ pmPos: entry.node.pmPos, newId, newLabel: newId + suffix, entry });
+  }
+  return replacements;
+}
+
+/**
+ * Regex-mode counterpart of nextAvailableId, scoped to the given ID's stem
+ * group: max existing number within the stem + 1, at the ID's digit width.
+ * Returns null when the ID has no numeric tail.
+ */
+export function nextAvailableIdForStem(
+  requirements: RequirementEntry[],
+  id: string,
+): string | null {
+  const target = splitIdNumericTail(id);
+  if (!target) return null;
+  let max = 0;
+  for (const entry of requirements) {
+    const split = splitIdNumericTail(entry.id);
+    if (split && split.stem === target.stem && split.num > max) max = split.num;
+  }
+  return target.stem + String(max + 1).padStart(target.width, "0");
+}
+
 // ── Mutation helpers ──────────────────────────────────────────────────────────
 
 /**
@@ -593,10 +695,12 @@ export function insertRequirementAfter(
   newId: string
 ): JSONContent[] {
   const [, to] = getSectionRange(content, nodeIndex, nodeLevel);
+  // Status brackets are italic by default: "ID [*Draft*]" in markdown.
+  const label = getRequirementStatuses().find((s) => s.id === "draft")?.label ?? "Draft";
   const heading: JSONContent = {
     type: "heading",
     attrs: { level: nodeLevel },
-    content: [{ type: "text", text: newId + " [Draft]" }],
+    content: [{ type: "text", text: newId + " " }, ...statusBracketNodes(label)],
   };
   // Mirror the container type of the source node so `> ### REQ` stays in blockquotes.
   const containerType = content[nodeIndex]?.type;

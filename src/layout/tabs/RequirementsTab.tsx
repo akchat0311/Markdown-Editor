@@ -112,6 +112,7 @@ export function RequirementsTab({
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [reviewFilter, setReviewFilter] = useState<ReviewState | "all">("all");
+  const [variantFilter, setVariantFilter] = useState("all");
 
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -142,6 +143,18 @@ export function RequirementsTab({
     [reviewStates],
   );
 
+  // Variants present in the document. The Variant column and filter appear
+  // only when at least one requirement carries a variant (D10–D13) — a
+  // variant-free document keeps today's exact layout.
+  const variantValues = useMemo(() => {
+    const seen = new Set<string>();
+    for (const r of index?.requirements ?? []) {
+      if (r.variant) seen.add(r.variant);
+    }
+    return Array.from(seen).sort();
+  }, [index]);
+  const hasVariants = variantValues.length > 0;
+
   const filterOptions = useMemo(
     () => [{ id: "all", label: "All" }, ...statuses.map((s) => ({ id: s.id, label: s.label }))],
     [statuses],
@@ -157,9 +170,12 @@ export function RequirementsTab({
       const matchesReview =
         reviewFilter === "all" ||
         (reviewFilter === "none" ? !reviewStates[r.id] : reviewStates[r.id] === reviewFilter);
-      return matchesStatus && matchesQuery && matchesReview;
+      const matchesVariant =
+        variantFilter === "all" ||
+        (variantFilter === "" ? !r.variant : r.variant === variantFilter);
+      return matchesStatus && matchesQuery && matchesReview && matchesVariant;
     });
-  }, [index, query, statusFilter, reviewFilter, reviewStates]);
+  }, [index, query, statusFilter, reviewFilter, reviewStates, variantFilter]);
 
   const handleRowClick = useCallback(
     (rec: RequirementRecord) => {
@@ -278,6 +294,29 @@ export function RequirementsTab({
               </div>
             </div>
 
+            {/* Variant filter (only when the document uses variants) */}
+            {hasVariants && (
+              <>
+                <div className="h-4 w-px shrink-0 bg-[var(--color-border)]" />
+                <div className="flex items-center gap-2">
+                  <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-[var(--color-muted)]">
+                    Variant
+                  </span>
+                  <select
+                    value={variantFilter}
+                    onChange={(e) => setVariantFilter(e.target.value)}
+                    className="rounded border border-[var(--color-border)] bg-[var(--color-paper)] px-2 py-1 text-[11px] text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+                  >
+                    <option value="all">All</option>
+                    {variantValues.map((v) => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                    <option value="">No variant</option>
+                  </select>
+                </div>
+              </>
+            )}
+
             {/* Review filter */}
             {reviewLoaded && totalComments > 0 && (
               <>
@@ -321,17 +360,28 @@ export function RequirementsTab({
               </div>
             ) : (
               <table className="w-full table-fixed text-xs" data-testid="requirements-table">
-                <colgroup>
-                  <col className="w-[40%]" />
-                  <col className="w-[20%]" />
-                  <col className="w-[20%]" />
-                  <col className="w-[20%]" />
-                </colgroup>
+                {hasVariants ? (
+                  <colgroup>
+                    <col className="w-[32%]" />
+                    <col className="w-[18%]" />
+                    <col className="w-[16%]" />
+                    <col className="w-[14%]" />
+                    <col className="w-[20%]" />
+                  </colgroup>
+                ) : (
+                  <colgroup>
+                    <col className="w-[40%]" />
+                    <col className="w-[20%]" />
+                    <col className="w-[20%]" />
+                    <col className="w-[20%]" />
+                  </colgroup>
+                )}
                 <thead className="sticky top-0 border-b border-[var(--color-border)] bg-[var(--color-paper)]">
                   <tr className="text-left text-[10px] font-semibold uppercase tracking-widest text-[var(--color-muted)]">
                     <th className="px-4 py-1.5">Section</th>
                     <th className="px-4 py-1.5">Req ID</th>
                     <th className="px-4 py-1.5">Status</th>
+                    {hasVariants && <th className="px-4 py-1.5">Variant</th>}
                     <th className="px-4 py-1.5 text-right">Review Status</th>
                   </tr>
                 </thead>
@@ -371,6 +421,20 @@ export function RequirementsTab({
                             {statusLabel(rec.status, statuses)}
                           </span>
                         </td>
+                        {hasVariants && (
+                          <td
+                            className="truncate px-4 py-1.5"
+                            onClick={() => handleRowClick(rec)}
+                          >
+                            {rec.variant ? (
+                              <span className="inline-flex items-center rounded border border-[var(--color-border)] px-2 py-0.5 text-xs font-medium text-[var(--color-muted)]">
+                                {rec.variant}
+                              </span>
+                            ) : (
+                              <span className="text-[var(--color-muted)]">—</span>
+                            )}
+                          </td>
+                        )}
                         <td className="px-4 py-1.5 text-right">
                           <ReviewStatusCell
                             reqId={rec.id}

@@ -5,6 +5,7 @@ import {
   checkDuplicateIds,
   checkMissingStatus,
   checkEmptyBody,
+  checkUnknownVariant,
 } from "@/services/documentValidationService";
 import type { RequirementRef } from "@/services/documentValidationService";
 import type { ValidationIssue, ValidationCategory } from "@/types/validation";
@@ -32,6 +33,7 @@ export function runAllValidations(
   requirements: ReadonlyArray<RequirementRef>,
   validAliases: ReadonlySet<string>,
   docContent?: ReadonlyArray<JSONContent>,
+  variantVocabulary: ReadonlyArray<string> = [],
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
@@ -46,6 +48,9 @@ export function runAllValidations(
   }
   if (r.emptyBody.enabled) {
     issues.push(...tag(checkEmptyBody(requirements), r.emptyBody.category as ValidationCategory));
+  }
+  if (r.unknownVariant.enabled) {
+    issues.push(...tag(checkUnknownVariant(requirements, variantVocabulary), r.unknownVariant.category as ValidationCategory));
   }
 
   for (const req of requirements) {

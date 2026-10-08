@@ -12,8 +12,10 @@ export interface RequirementRef {
    *  captured ID isn't purely numeric — such entries are skipped by the
    *  order check (there's no meaningful numeric ordering for them). */
   num: number | null;
-  /** Raw text inside the trailing [bracket], or null when no bracket is present. */
+  /** Raw text inside the classified [Status] bracket, or null when absent. */
   statusText: string | null;
+  /** Display text of the [Variant] bracket (D10–D13), or null when absent. */
+  variantText?: string | null;
   /** Trimmed plain-text content beneath the heading (the requirement body). */
   bodyText: string;
 }
@@ -176,6 +178,35 @@ export function checkEmptyBody(
  *   through to checkMissingStatus.  Pass an empty set when statuses are not
  *   yet loaded — the status rule then only checks for bracket presence.
  */
+/**
+ * Flags requirements whose [Variant] is not in the configured vocabulary
+ * (mdreq.variantVocabulary). Fires only when a vocabulary IS configured —
+ * with the setting empty the variant is free text and never validated
+ * (design D12). Requirements without a variant are never flagged.
+ */
+export function checkUnknownVariant(
+  requirements: ReadonlyArray<Pick<RequirementRef, "id" | "variantText">>,
+  vocabulary: ReadonlyArray<string>,
+): ValidationIssue[] {
+  if (vocabulary.length === 0) return [];
+  const normalized = new Set(vocabulary.map((v) => normalizeStatusText(v)));
+  const issues: ValidationIssue[] = [];
+  for (let i = 0; i < requirements.length; i++) {
+    const { id, variantText } = requirements[i];
+    if (variantText == null) continue;
+    if (!normalized.has(normalizeStatusText(variantText))) {
+      issues.push({
+        id: `unknown-variant-${i}-${id}`,
+        severity: "warning",
+        type: "unknown-variant",
+        message: `${id} has a variant "${variantText.trim()}" that is not in the configured variant vocabulary.`,
+        targetId: id,
+      });
+    }
+  }
+  return issues;
+}
+
 export function validateDocument(
   requirements: ReadonlyArray<RequirementRef>,
   validAliases: ReadonlySet<string> = new Set(),

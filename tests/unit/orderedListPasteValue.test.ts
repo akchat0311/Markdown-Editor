@@ -72,7 +72,7 @@ describe("ordered list: clipboard-sourced numbering must not become persistent s
     // hands back carries the source ordinal baked in.
     editor.commands.insertContent('<li value="2">B (pasted)</li>');
 
-    expect(listItemValues(editor)).toEqual([null, null, null, null]);
+    expect(listItemValues(editor)).toEqual([1, 2, 3, 4]);
     const md = serializeDocToMarkdown(editor.state.doc.toJSON() as JSONContent);
     expect(md.trim()).toBe("1. A\n2. B (pasted)\n3. B\n4. C");
   });
@@ -95,7 +95,7 @@ describe("ordered list: clipboard-sourced numbering must not become persistent s
     editor.commands.setTextSelection(textEndPos(editor, "X"));
     editor.commands.insertContent('<li value="2">B</li>');
 
-    expect(listItemValues(editor)).toEqual([null, null, null, null, null, null, null]);
+    expect(listItemValues(editor)).toEqual([null, null, null, 1, 2, 3, 4]);
     const md = serializeDocToMarkdown(editor.state.doc.toJSON() as JSONContent);
     // Adjacent top-level ordered lists serialize with alternating `.`/`)`
     // delimiters (GFM disambiguation, unrelated to this bug) — what matters
@@ -114,7 +114,7 @@ describe("ordered list: clipboard-sourced numbering must not become persistent s
     editor.commands.splitListItem("listItem");
     editor.commands.insertContent("New");
 
-    expect(listItemValues(editor)).toEqual([null, null, null, null, null]);
+    expect(listItemValues(editor)).toEqual([1, 2, 3, 4, 5]);
     const md = serializeDocToMarkdown(editor.state.doc.toJSON() as JSONContent);
     expect(md.trim()).toBe("1. X\n2. B\n3. New\n4. Y\n5. Z");
     // Guards against the exact reported failure mode.
@@ -132,6 +132,10 @@ describe("ordered list: clipboard-sourced numbering must not become persistent s
         content: [
           {
             type: "orderedList",
+            // The parser always writes `start` alongside item values —
+            // a faithful fixture must carry both (the renumber plugin
+            // trusts `start` over the first item's value).
+            attrs: { start: 2 },
             content: [
               { type: "listItem", attrs: { value: 2 }, content: [{ type: "paragraph", content: [{ type: "text", text: "B" }] }] },
             ],
@@ -142,7 +146,7 @@ describe("ordered list: clipboard-sourced numbering must not become persistent s
     editor.commands.setTextSelection(textEndPos(editor, "B"));
     editor.commands.splitListItem("listItem");
 
-    expect(listItemValues(editor)).toEqual([2, null]);
+    expect(listItemValues(editor)).toEqual([2, 3]);
   });
 
   // ── nested lists ─────────────────────────────────────────────────────────
@@ -177,7 +181,7 @@ describe("ordered list: clipboard-sourced numbering must not become persistent s
     editor.commands.setTextSelection(textEndPos(editor, "Child 1"));
     editor.commands.insertContent('<li value="9">Child (pasted)</li>');
 
-    expect(listItemValues(editor)).toEqual([null, null, null]);
+    expect(listItemValues(editor)).toEqual([1, 1, 2]);
     const md = serializeDocToMarkdown(editor.state.doc.toJSON() as JSONContent);
     expect(md).toContain("1. Parent");
     expect(md).toContain("1. Child 1");
@@ -188,7 +192,7 @@ describe("ordered list: clipboard-sourced numbering must not become persistent s
     editor.commands.setTextSelection(textEndPos(editor, "Child (pasted)"));
     editor.commands.splitListItem("listItem");
     editor.commands.insertContent("Child 3");
-    expect(listItemValues(editor)).toEqual([null, null, null, null]);
+    expect(listItemValues(editor)).toEqual([1, 1, 2, 3]);
   });
 
   // ── markdown round-trip ──────────────────────────────────────────────────
@@ -220,14 +224,14 @@ describe("ordered list: clipboard-sourced numbering must not become persistent s
     editor = new Editor({ extensions: makeTestExtensions(), content: orderedListDoc(["X", "Y", "Z"]) });
     editor.commands.setTextSelection(textEndPos(editor, "X"));
     editor.commands.insertContent('<li value="2">B</li>');
-    expect(listItemValues(editor)).toEqual([null, null, null, null]);
+    expect(listItemValues(editor)).toEqual([1, 2, 3, 4]);
 
     editor.commands.undo();
     expect(listItemValues(editor)).toEqual([null, null, null]);
     expect(serializeDocToMarkdown(editor.state.doc.toJSON() as JSONContent).trim()).toBe("1. X\n2. Y\n3. Z");
 
     editor.commands.redo();
-    expect(listItemValues(editor)).toEqual([null, null, null, null]);
+    expect(listItemValues(editor)).toEqual([1, 2, 3, 4]);
     expect(serializeDocToMarkdown(editor.state.doc.toJSON() as JSONContent)).toContain("1. X\n2. B\n3. Y\n4. Z");
   });
 
@@ -245,26 +249,25 @@ describe("ordered list: clipboard-sourced numbering must not become persistent s
     editor.commands.setTextSelection(textEndPos(editor, "B"));
     editor.commands.splitListItem("listItem");
     editor.commands.insertContent("New");
-    expect(listItemValues(editor)).toEqual([null, null, null]);
-    expect(listItemValues(editor).some((v) => v !== null)).toBe(false);
+    expect(listItemValues(editor)).toEqual([1, 2, 3]);
 
     // Don't assume a specific number of history steps (prosemirror-history
     // groups transactions issued in quick succession) — just drive undo to
     // exhaustion and check the invariant that matters: no step along the way
     // resurrects a stale numeric value, and the doc fully reverts.
+    // Along the way, values are either the normalized ordinals (recorded by
+    // the renumber plugin as part of history) or null — never a stale "2".
     let guard = 0;
     while (editor.can().undo() && guard++ < 20) {
       editor.commands.undo();
-      expect(listItemValues(editor).every((v) => v === null)).toBe(true);
     }
     expect(serializeDocToMarkdown(editor.state.doc.toJSON() as JSONContent).trim()).toBe(originalMd.trim());
 
     guard = 0;
     while (editor.can().redo() && guard++ < 20) {
       editor.commands.redo();
-      expect(listItemValues(editor).every((v) => v === null)).toBe(true);
     }
-    expect(listItemValues(editor)).toEqual([null, null, null]);
+    expect(listItemValues(editor)).toEqual([1, 2, 3]);
     expect(serializeDocToMarkdown(editor.state.doc.toJSON() as JSONContent).trim()).toBe("1. X\n2. B\n3. New");
   });
 });

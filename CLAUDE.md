@@ -196,3 +196,66 @@ When adding support for a new inline HTML element:
 2. Verify `transformInlineMarks` marks it as OPAQUE (html nodes are OPAQUE by default).
 3. The rawHtmlInline path handles it automatically — no parser change needed.
 4. Add a fixture to `html-fidelity-audit.test.ts` (Group C).
+
+---
+
+## Live-editor boundary — soft breaks, empty paragraphs, source preservation
+
+Ported from the VS Code extension (`md-requirements-vscode`, whose `packages/engine`
+is a copy of this `src/`). Every parse/serialize that touches the LIVE editor goes
+through `src/markdown/editorDoc.ts`:
+
+```
+markdownToEditorDoc(md)        = expandSoftBreaks(parseMarkdownToDoc(md))
+editorDocToMarkdown(json, prev) = mergePreservingUnchangedBlocks(
+                                    prev,
+                                    serializeDocToMarkdown(
+                                      stripEmptyTopLevelParagraphs(collapseSoftBreaks(json))))
+```
+
+- **SoftBreak** (`editor/extensions/SoftBreak.ts`, `markdown/softBreaks.ts`): a lazy
+  `\n` inside a paragraph is an explicit inline `softBreak` node in the editor, never a
+  raw newline in a text node (Chromium contentEditable rewrites those into `<br>` →
+  HardBreak → trailing `\`). The parser/serializer still speak raw `\n`; the two
+  transforms sit at the boundary. Headings never get soft breaks (newline → space).
+  Any helper that walks live JSON text must treat `softBreak` as a line break
+  (`extractBodyText`, `reviewExportService.extractText`, `SoftBreak.renderText`).
+- **Empty paragraphs** (`markdown/emptyParagraphs.ts`): empty top-level (and
+  blockquote/callout) paragraphs are caret parking and never serialize.
+- **Source preservation (D9)** (`markdown/sourcePreservation.ts`): the serializer is
+  canonicalizing; the merge re-emits every top-level block whose canonical form is
+  unchanged verbatim from the previous source (the tab's `markdown`). Untouched lines
+  stay byte-identical; a no-edit round trip is a no-op. A safety gate falls back to the
+  full canonical output if the merged text would parse differently.
+- **Enter key** (`stores/editorBehaviorStore.ts`, `CustomKeymap.ts`): `"line"` (default)
+  — Enter inserts one soft break (one newline in the file), Enter again on the empty
+  line makes a paragraph break; `"paragraph"` — classic markdown. Enter inside a
+  heading never splits it. Toggle lives in the status bar; persisted in localStorage.
+- **Ordered lists** (`SpreadLists.ts`): item `value` attrs are renormalized for any
+  list the user edits (untouched lists keep exotic numbering byte-exact).
+- **Backspace in lists** (`CustomKeymap.ts`): at the start of a non-first list item
+  Backspace joins into the previous item (an emptied item simply disappears), so
+  deleting items from the middle never splits the list; TipTap's default lift is
+  kept for the first item (and via Shift+Tab). Tests: `listItemBackspaceJoin.test.ts`.
+
+## Requirement heading fields — `[Status] [Variant]`
+
+`editor/utils/headingFields.ts` is the single tokenizer for the trailing bracket
+groups of a requirement heading (`<ID> <title> [Status] [Variant]`). Status labels
+are written italic (`[*Draft*]`) and resolve emphasis-insensitively. The variant is
+optional, plain text, edited via the chip next to the status; the vocabulary (comma
+separated, Outline → requirement settings → Variant Vocabulary) turns the chip into a
+dropdown and enables the `unknownVariant` quality rule. New requirements inherit the
+document's variant when exactly one is in use. Regex-mode patterns renumber and insert
+per ID stem (everything before the trailing number).
+
+## Divergences from the extension engine
+
+Keep these in mind when syncing with `md-requirements-vscode/packages/engine`:
+`core.ts` (uses StarterKit's codeBlock, no `@tiptap/extension-code-block` dep),
+`editorBehaviorStore.ts` (persisted + `toggleEnterMode`), `SoftBreak.ts`
+(`renderText`), `extractBodyText.ts` / `reviewExportService.ts` (softBreak = newline),
+`OutlinePanel.tsx` (soft-break collapse in section copy/export, Variant Vocabulary
+field, updated regex help text), `StatusBar.tsx` (Enter toggle), `sourcePreservation.ts`
+(`\u0000` escapes instead of raw NUL bytes). The extension would benefit from the
+first four fixes as well.

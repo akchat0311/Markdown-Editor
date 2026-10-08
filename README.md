@@ -14,7 +14,7 @@ npm run preview    # preview production build
 ## Testing
 
 ```bash
-npm test                 # 53 tests across 3 suites
+npm test                 # vitest unit suite (shared with the VS Code extension's engine)
 npm run test:watch
 npm run typecheck
 npm run lint
@@ -26,6 +26,10 @@ npm run lint
 | - | - |
 | WYSIWYG editor (Tiptap v3 / ProseMirror) | ✅ |
 | Markdown round-trip (deterministic) | ✅ |
+| Fidelity: only edited blocks are rewritten; untouched lines stay byte-identical | ✅ |
+| Enter = one newline (toggle Line / Paragraph mode in the status bar) | ✅ |
+| Requirement headings: `[Status] [Variant]` brackets, variant vocabulary, quality rule | ✅ |
+| Ordered-list markers renumbered in the file when a list is edited | ✅ |
 | Document tabs (multi-document) | ✅ |
 | Source mode (⌘/ — synced textarea) | ✅ |
 | Slash command menu (`/`) | ✅ |
@@ -63,13 +67,13 @@ User types → Tiptap/ProseMirror (always mounted)
 
 ### Source mode
 
-Source mode is NOT a second editor. Tiptap stays mounted and hidden (`display:none`). A `<SourcePane>` textarea appears, initialized from `serializeDocToMarkdown(editor.getJSON())`. Edits are debounced 250 ms → `parseMarkdownToDoc(text)` → `editor.commands.setContent()`. Tiptap is the single source of truth at all times.
+Source mode is NOT a second editor. Tiptap stays mounted and hidden (`display:none`). A `<SourcePane>` textarea appears, initialized from the tab's markdown. Edits are debounced 250 ms → `markdownToEditorDoc(text)` → `editor.commands.setContent()`. All live-editor parse/serialize goes through `src/markdown/editorDoc.ts` (soft breaks, empty-paragraph stripping, per-block source preservation — see CLAUDE.md). Tiptap is the single source of truth at all times.
 
 `onUpdate` is a no-op while `sourceModeRef.current` is true, preventing feedback loops. Toggle with ⌘/ or the `<>` button in the status bar.
 
 ### Tab switching
 
-All tabs share one Tiptap instance. Switching tabs calls `editor.commands.setContent(parseMarkdownToDoc(tab.markdown))` guarded by `isLoadingContentRef` to suppress the resulting `onUpdate` store write (which would incorrectly mark the tab dirty).
+All tabs share one Tiptap instance. Switching tabs loads `markdownToEditorDoc(tab.markdown)` into the editor guarded by `isLoadingContentRef` to suppress the resulting `onUpdate` store write (which would incorrectly mark the tab dirty).
 
 ### Markdown canonical format
 

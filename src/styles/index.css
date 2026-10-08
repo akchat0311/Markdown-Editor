@@ -607,6 +607,69 @@ body {
   letter-spacing: 0;
 }
 
+/* ── Variant chip (D10–D13) ─────────────────────────────────────────────── */
+
+.req-variant-widget {
+  display: inline-flex;
+  position: relative;
+  user-select: none;
+  vertical-align: baseline;
+  margin-left: 0.35em;
+}
+
+/* Plain (non-italic) neutral chip — visually distinct from the status chip */
+.req-variant-btn {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+  font-size: 0.67em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  padding: 1px 6px;
+  white-space: nowrap;
+  transition: opacity 0.12s, background 0.12s;
+}
+
+.req-variant-btn:hover {
+  background: var(--color-border);
+  color: var(--color-text);
+}
+
+.req-variant-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+/* Ghost "+ Variant" affordance: invisible until the heading is hovered */
+.req-variant-btn--add {
+  border-style: dashed;
+  font-weight: 500;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ProseMirror :is(h1, h2, h3, h4, h5, h6):hover .req-variant-btn--add,
+.req-variant-btn--add:focus-visible {
+  opacity: 0.75;
+  pointer-events: auto;
+}
+
+.req-variant-input {
+  border: 1px solid var(--color-accent);
+  border-radius: 4px;
+  background: var(--color-paper);
+  color: var(--color-text);
+  font-size: 0.67em;
+  line-height: 1.4;
+  padding: 1px 6px;
+  width: 9em;
+}
+
 .req-status-caret {
   font-size: 0.8em;
   opacity: 0.7;

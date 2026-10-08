@@ -2,8 +2,7 @@ import type { Editor, Range } from "@tiptap/core";
 import type { JSONContent } from "@tiptap/core";
 import { useConfigStore } from "@/stores/configStore";
 import { deriveOutline, flattenOutline } from "@/editor/utils/deriveOutline";
-import { compileRequirementPattern, analyzeRequirements, nextAvailableId, insertRequirementAfter } from "@/editor/utils/requirementOps";
-import { getSectionRange } from "@/editor/utils/outlineOps";
+import { compileRequirementPattern, analyzeRequirements, nextAvailableId, nextAvailableIdForStem, collectDocumentVariants } from "@/editor/utils/requirementOps";
 
 export interface SlashCommandItem {
   id: string;
@@ -19,7 +18,11 @@ function makeRequirementSlashItem(): SlashCommandItem | null {
   // Regex-mode patterns can match IDs but can't *generate* a new one (a
   // regex describes matching, not construction), so this command — which
   // needs to synthesize the next ID — is only offered in simple mode.
-  if (!compileRequirementPattern(requirementPattern)?.supportsNumbering) return null;
+  // Simple mode can always generate the next ID; regex mode can generate
+  // within an existing ID's stem group (per-feature numbering), so the item
+  // shows whenever a pattern is configured — the command itself bails when
+  // no stem is derivable (e.g. an empty document in regex mode).
+  if (!compileRequirementPattern(requirementPattern)) return null;
 
   return {
     id: "requirement",
@@ -30,72 +33,81 @@ function makeRequirementSlashItem(): SlashCommandItem | null {
     command: (editor: Editor, range: Range) => {
       const { requirementPattern: pattern } = useConfigStore.getState();
       const compiled = compileRequirementPattern(pattern);
-      if (!compiled || !compiled.supportsNumbering) return;
+      if (!compiled) return;
 
-      const { prefix, digits } = compiled;
-
-      // Capture cursor position before deleting the slash text
+      // The new requirement is created AT THE CURSOR: the block where the
+      // user typed "/" becomes the requirement heading (VS Code-era design
+      // change, 2026-08-30 — the browser app spliced it after the current
+      // section, which surprised users; see e2e scenarios 15/16).
       const cursorPos = range.from;
-
-      // Remove the "/" and any filter text the user typed
-      editor.chain().deleteRange(range).run();
-
-      // Re-read doc state after deletion
-      const docContent = editor.state.doc.content.toJSON() as JSONContent[];
       const flat = flattenOutline(deriveOutline(editor));
-      const analysis = analyzeRequirements(flat, docContent, pattern);
+      const analysis = analyzeRequirements(
+        flat,
+        editor.state.doc.content.toJSON() as JSONContent[],
+        pattern,
+      );
       const existingReqs = analysis?.requirements ?? [];
-      const newId = nextAvailableId(existingReqs, prefix, digits);
 
-      // Anchor: nearest requirement before the cursor so the new one lands right after it
+      // ID context: nearest requirement before the cursor supplies the regex
+      // stem (per-feature numbering) and the heading level to mirror.
       const reqsBefore = existingReqs.filter((r) => r.node.pmPos <= cursorPos);
-      const anchor =
-        reqsBefore.length > 0
-          ? reqsBefore[reqsBefore.length - 1]
-          : existingReqs[0];
+      const idAnchor =
+        reqsBefore.length > 0 ? reqsBefore[reqsBefore.length - 1] : existingReqs[0];
 
-      let nodeIndex: number;
-      let nodeLevel: number;
+      const newId = compiled.supportsNumbering
+        ? nextAvailableId(existingReqs, compiled.prefix ?? "", compiled.digits ?? 3)
+        : idAnchor
+          ? nextAvailableIdForStem(existingReqs, idAnchor.id)
+          : null;
+      // Regex mode with no stem context (empty document): bail without
+      // deleting, leaving the user's typed "/" intact.
+      if (!newId) return;
 
-      if (anchor) {
-        nodeIndex = anchor.node.index;
-        nodeLevel = anchor.node.level ?? 3;
+      const level = idAnchor?.node.level ?? 3;
+
+      // Variant inheritance (user request, 2026-09-02): when the document's
+      // requirements use exactly ONE distinct variant, a new requirement
+      // gets it by default. With several variants in play nothing is
+      // guessed — the "+ Variant" chip offers them as a dropdown instead.
+      const docVariants = collectDocumentVariants(editor.state.doc);
+      const inheritedVariant = docVariants.length === 1 ? docVariants[0] : null;
+
+      editor.chain().focus().deleteRange(range).run();
+      const headingContent = [
+        { type: "text", text: `${newId} [` },
+        { type: "text", text: "Draft", marks: [{ type: "italic" }] },
+        { type: "text", text: inheritedVariant ? `] [${inheritedVariant}]` : "]" },
+      ];
+      const parentEmpty = editor.state.selection.$from.parent.content.size === 0;
+      if (parentEmpty) {
+        // "/" on a fresh line: convert the empty block in place.
+        editor.chain().focus().setNode("heading", { level }).insertContent(headingContent).run();
+        const suffixLen =
+          " [Draft]".length + (inheritedVariant ? ` [${inheritedVariant}]`.length : 0);
+        editor
+          .chain()
+          .setTextSelection(editor.state.selection.from - suffixLen)
+          .scrollIntoView()
+          .run();
       } else {
-        // No requirements yet — insert after whichever top-level node held the cursor
-        let fallback = 0;
-        editor.state.doc.forEach((_n, offset, idx) => {
-          if (offset <= cursorPos) fallback = idx;
-        });
-        nodeIndex = fallback;
-        nodeLevel = 3;
+        // Non-empty block: NEVER convert it (any remainder — text, soft
+        // breaks — would become heading content; a soft break inside a
+        // heading corrupted status detection, user report 2026-09-01).
+        // Split at the caret and insert a standalone heading between the
+        // halves.
+        editor.chain().focus().splitBlock().run();
+        const boundary = editor.state.selection.$from.before();
+        editor
+          .chain()
+          .insertContentAt(boundary, {
+            type: "heading",
+            attrs: { level },
+            content: headingContent,
+          })
+          .setTextSelection(boundary + 1 + `${newId}`.length)
+          .scrollIntoView()
+          .run();
       }
-
-      const [, insertedAtIndex] = getSectionRange(docContent, nodeIndex, nodeLevel);
-      const newContent = insertRequirementAfter(docContent, nodeIndex, nodeLevel, newId);
-
-      // Use setTimeout to avoid React's flushSync conflict (same pattern as OutlinePanel)
-      setTimeout(() => {
-        editor.commands.setContent({ type: "doc", content: newContent });
-
-        let targetPmPos = -1;
-        editor.state.doc.forEach((_n, offset, idx) => {
-          if (idx === insertedAtIndex) targetPmPos = offset;
-        });
-
-        if (targetPmPos >= 0) {
-          const insertedNode = editor.state.doc.nodeAt(targetPmPos);
-          const isContainer =
-            insertedNode?.type.name === "blockquote" ||
-            insertedNode?.type.name === "callout";
-          const innerOffset = isContainer ? 2 : 1;
-          editor
-            .chain()
-            .focus()
-            .setTextSelection(targetPmPos + innerOffset + newId.length)
-            .scrollIntoView()
-            .run();
-        }
-      }, 0);
     },
   };
 }

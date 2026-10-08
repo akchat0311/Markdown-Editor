@@ -29,6 +29,7 @@ import {
   duplicateMultipleSections,
 } from "@/editor/utils/outlineOps";
 import { serializeDocToMarkdown } from "@/markdown/serializer";
+import { collapseSoftBreaks } from "@/markdown/softBreaks";
 import { useToastStore } from "@/stores/toastStore";
 import { TextSelection, type Transaction } from "@tiptap/pm/state";
 import {
@@ -38,6 +39,9 @@ import {
   nextAvailableId,
   insertRequirementAfter,
   computeRenumberReplacements,
+  computeStemRenumberReplacements,
+  nextAvailableIdForStem,
+  splitIdNumericTail,
   type CompiledPattern,
   type RequirementAnalysis,
 } from "@/editor/utils/requirementOps";
@@ -480,6 +484,9 @@ interface PatternConfigPanelProps {
   onRegexFlagsChange: (v: string) => void;
   onClear: () => void;
   hasExistingPattern: boolean;
+  /** Comma-separated text of the configured [Variant] vocabulary. */
+  variantVocabulary: string;
+  onVariantVocabularyChange: (v: string) => void;
 }
 
 function PatternConfigPanel({
@@ -493,6 +500,8 @@ function PatternConfigPanel({
   onRegexFlagsChange,
   onClear,
   hasExistingPattern,
+  variantVocabulary,
+  onVariantVocabularyChange,
 }: PatternConfigPanelProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -603,12 +612,36 @@ function PatternConfigPanel({
             Include a capture group for the ID — a named group{" "}
             <code className="rounded bg-[var(--color-border)] px-1">(?&lt;id&gt;…)</code>{" "}
             is used when present, otherwise the first group. Invalid patterns are
-            never applied. Regex mode doesn't support generating new IDs (Insert
-            Requirement, Renumber), since a regex matches text — it doesn't define
-            how to construct one.
+            never applied. New IDs (Insert Requirement, Renumber) are generated
+            within an existing ID's group — everything before the trailing
+            number, e.g. per feature — so they work once the document has at
+            least one matching ID.
           </p>
         </>
       )}
+
+      <p className="mb-1 mt-3 text-[10px] font-semibold uppercase tracking-widest text-[var(--color-muted)]">
+        Variant Vocabulary
+      </p>
+      <input
+        value={variantVocabulary}
+        onChange={(e) => onVariantVocabularyChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") (e.target as HTMLInputElement).blur();
+        }}
+        placeholder="e.g. V1, V2, EU"
+        className="w-full rounded border border-[var(--color-border)] bg-[var(--color-paper)] px-2 py-1 text-xs text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
+        spellCheck={false}
+        aria-label="Variant vocabulary"
+      />
+      <p className="mt-1.5 text-[10px] leading-relaxed text-[var(--color-muted)]">
+        Optional, comma-separated. Allowed values for the{" "}
+        <code className="rounded bg-[var(--color-border)] px-1">[Variant]</code>{" "}
+        bracket on requirement headings, e.g.{" "}
+        <code className="rounded bg-[var(--color-border)] px-1">REQ_001 [Draft] [V2]</code>.
+        When set, the variant chip offers a dropdown and unknown variants are
+        flagged by the quality checks. Leave empty to allow free text.
+      </p>
 
       {hasExistingPattern && (
         <button
@@ -793,8 +826,9 @@ function IssueSummaryStrip({
 
 interface RenumberConfirmDialogProps {
   reqCount: number;
-  prefix: string;
-  digits: number;
+  /** null in regex mode: renumbering is per ID-stem group, not one prefix. */
+  prefix: string | null;
+  digits: number | null;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -819,11 +853,21 @@ function RenumberConfirmDialog({
           <span className="font-medium text-[var(--color-text)]">
             {reqCount} requirement heading{reqCount !== 1 ? "s" : ""}
           </span>{" "}
-          will be renumbered sequentially using prefix{" "}
-          <code className="rounded bg-[var(--color-border)] px-1 font-mono text-[10px]">
-            {prefix || "(none)"}
-          </code>{" "}
-          with {digits}-digit formatting.
+          {prefix !== null && digits !== null ? (
+            <>
+              will be renumbered sequentially using prefix{" "}
+              <code className="rounded bg-[var(--color-border)] px-1 font-mono text-[10px]">
+                {prefix || "(none)"}
+              </code>{" "}
+              with {digits}-digit formatting.
+            </>
+          ) : (
+            <>
+              will be renumbered sequentially <em>within each ID group</em>{" "}
+              (everything before the trailing number, e.g. per feature).
+              IDs without a trailing number are left untouched.
+            </>
+          )}
         </p>
         <p className="mb-5 text-xs text-[var(--color-muted)]">
           Duplicate IDs and gaps will be resolved. This can be undone with Cmd+Z.
@@ -1156,8 +1200,16 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
   const [deleteNode, setDeleteNode] = useState<OutlineNode | null>(null);
 
   // ── Requirement pattern config ──────────────────────────────────────────────
-  const { requirementPattern, setRequirementPattern, setRequirementRegexPattern, clearRequirementPattern } =
-    useConfigStore();
+  const {
+    requirementPattern,
+    setRequirementPattern,
+    setRequirementRegexPattern,
+    clearRequirementPattern,
+    variantVocabulary,
+    setVariantVocabulary,
+  } = useConfigStore();
+  const [variantInput, setVariantInput] = useState(variantVocabulary.join(", "));
+  const variantTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [patternOpen, setPatternOpen] = useState(false);
   const [patternMode, setPatternMode] = useState<PatternMode>(
     requirementPattern?.mode ?? "simple"
@@ -1173,6 +1225,7 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
   );
   const [issueListOpen, setIssueListOpen] = useState(false);
   const [renumberConfirmOpen, setRenumberConfirmOpen] = useState(false);
+
   const patternTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Outline rebuild ─────────────────────────────────────────────────────────
@@ -1309,10 +1362,11 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
       content.slice(from, to)
     );
     try {
-      const markdown = serializeDocToMarkdown({
-        type: "doc",
-        content: selectedContent,
-      });
+      // Live editor JSON carries softBreak nodes; collapse them back to "\n"
+      // before serializing (same transform as editorDocToMarkdown).
+      const markdown = serializeDocToMarkdown(
+        collapseSoftBreaks({ type: "doc", content: selectedContent }),
+      );
       await navigator.clipboard.writeText(markdown);
       useToastStore.getState().show(
         `Copied ${ranges.length} section${ranges.length !== 1 ? "s" : ""}`,
@@ -1333,10 +1387,11 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
       content.slice(from, to)
     );
     try {
-      const markdown = serializeDocToMarkdown({
-        type: "doc",
-        content: selectedContent,
-      });
+      // Live editor JSON carries softBreak nodes; collapse them back to "\n"
+      // before serializing (same transform as editorDocToMarkdown).
+      const markdown = serializeDocToMarkdown(
+        collapseSoftBreaks({ type: "doc", content: selectedContent }),
+      );
       const blob = new Blob([markdown], { type: "text/markdown" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -1858,6 +1913,18 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
     [handleRegexInputChange, regexSourceInput]
   );
 
+  const handleVariantVocabularyChange = useCallback(
+    (value: string) => {
+      setVariantInput(value);
+      if (variantTimerRef.current) clearTimeout(variantTimerRef.current);
+      variantTimerRef.current = setTimeout(
+        () => setVariantVocabulary(value.split(",")),
+        PATTERN_APPLY_MS
+      );
+    },
+    [setVariantVocabulary]
+  );
+
   const handlePatternClear = useCallback(() => {
     if (patternTimerRef.current) clearTimeout(patternTimerRef.current);
     clearRequirementPattern();
@@ -1909,10 +1976,24 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
     [editor, compiledPattern, analysis, getDocContent, applyContentOp]
   );
 
+  // Renumbering support: simple mode always; regex mode when IDs carry a
+  // trailing number (per-stem renumbering — TRANS_<Feature>_NNN groups by
+  // the stem, which embeds the feature segment).
+  const canRenumber = Boolean(
+    compiledPattern?.supportsNumbering ||
+      (compiledPattern?.mode === "regex" &&
+        analysis?.requirements.some((r) => splitIdNumericTail(r.id) !== null)),
+  );
+
   const handleRenumber = useCallback(() => {
-    if (!editor || !compiledPattern?.supportsNumbering || !analysis) return;
-    const { prefix, digits } = compiledPattern;
-    const replacements = computeRenumberReplacements(analysis.requirements, prefix, digits);
+    if (!editor || !compiledPattern || !analysis || !canRenumber) return;
+    const replacements = compiledPattern.supportsNumbering
+      ? computeRenumberReplacements(
+          analysis.requirements,
+          compiledPattern.prefix ?? "",
+          compiledPattern.digits ?? 3,
+        )
+      : computeStemRenumberReplacements(analysis.requirements);
 
     const { state } = editor;
     let tr = state.tr;
@@ -1944,14 +2025,20 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
     useTraceabilityStore.getState().remapRequirementIds(renames);
 
     setRenumberConfirmOpen(false);
-  }, [editor, compiledPattern, analysis]);
+  }, [editor, compiledPattern, analysis, canRenumber]);
 
   const handleReassignDuplicate = useCallback(
     (id: string, nodes: OutlineNode[]) => {
-      if (!editor || !compiledPattern?.supportsNumbering || !analysis) return;
-      const { prefix, digits } = compiledPattern;
+      if (!editor || !compiledPattern || !analysis || !canRenumber) return;
       const target = nodes[nodes.length - 1]; // last occurrence by document order
-      const newId = nextAvailableId(analysis.requirements, prefix, digits);
+      const newId = compiledPattern.supportsNumbering
+        ? nextAvailableId(
+            analysis.requirements,
+            compiledPattern.prefix ?? "",
+            compiledPattern.digits ?? 3,
+          )
+        : nextAvailableIdForStem(analysis.requirements, id);
+      if (!newId) return; // no numeric tail — cannot generate an ID
 
       const { state } = editor;
       const node = state.doc.nodeAt(target.pmPos);
@@ -1970,7 +2057,7 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
       useReviewCommentsStore.getState().copyRequirementComments(id, newId);
       useTraceabilityStore.getState().copyRequirementLinks(id, newId);
     },
-    [editor, compiledPattern, analysis]
+    [editor, compiledPattern, analysis, canRenumber]
   );
 
   // ── Validation issues (ordering) ────────────────────────────────────────────
@@ -2079,6 +2166,8 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
             onRegexFlagsChange={handleRegexFlagsChange}
             onClear={handlePatternClear}
             hasExistingPattern={requirementPattern !== null}
+            variantVocabulary={variantInput}
+            onVariantVocabularyChange={handleVariantVocabularyChange}
           />
         )}
 
@@ -2151,12 +2240,8 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
             issueListOpen={issueListOpen}
             onToggle={() => setIssueListOpen((o) => !o)}
             onNavigate={handleSelect}
-            onRenumber={
-              compiledPattern?.supportsNumbering ? () => setRenumberConfirmOpen(true) : undefined
-            }
-            onReassignDuplicate={
-              compiledPattern?.supportsNumbering ? handleReassignDuplicate : undefined
-            }
+            onRenumber={canRenumber ? () => setRenumberConfirmOpen(true) : undefined}
+            onReassignDuplicate={canRenumber ? handleReassignDuplicate : undefined}
           />
         )}
 
@@ -2256,11 +2341,11 @@ export function OutlinePanel({ width, noWidthStyle }: OutlinePanelProps) {
       )}
 
       {/* Renumber confirmation */}
-      {renumberConfirmOpen && compiledPattern?.supportsNumbering && analysis && (
+      {renumberConfirmOpen && canRenumber && analysis && (
         <RenumberConfirmDialog
           reqCount={analysis.requirements.length}
-          prefix={compiledPattern.prefix}
-          digits={compiledPattern.digits}
+          prefix={compiledPattern?.supportsNumbering ? compiledPattern.prefix : null}
+          digits={compiledPattern?.supportsNumbering ? compiledPattern.digits : null}
           onConfirm={handleRenumber}
           onCancel={() => setRenumberConfirmOpen(false)}
         />

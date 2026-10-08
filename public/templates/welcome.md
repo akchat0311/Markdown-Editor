@@ -163,11 +163,11 @@ def word_count(text: str) -> int:
 
 Headings can encode requirement IDs — useful for specification documents.
 
-### REQ_001 \[Draft]
+### REQ_001 \[*Draft*]
 
 The system shall authenticate users via OAuth 2.0 before granting access to protected resources.
 
-### REQ_002 \[Approved]
+### REQ_002 \[*Approved*]
 
 All API responses shall include a `Content-Security-Policy` header.
 

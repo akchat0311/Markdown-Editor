@@ -4,6 +4,7 @@ import { EditorContext } from "@/editor/EditorContext";
 import { useUIStore, useTabStore, getActiveTab } from "@/stores";
 import { useReviewCommentsStore } from "@/stores/reviewCommentsStore";
 import { useTraceabilityStore } from "@/stores/traceabilityStore";
+import { useEditorBehaviorStore } from "@/stores/editorBehaviorStore";
 
 function countWords(text: string): number {
   return text.trim() ? text.trim().split(/\s+/).length : 0;
@@ -102,6 +103,8 @@ export function StatusBar({
   const reviewIsDirty = useReviewCommentsStore((s) => s.isDirty);
   const traceabilityLoaded = useTraceabilityStore((s) => s.loaded);
   const traceabilityIsDirty = useTraceabilityStore((s) => s.isDirty);
+  const enterMode = useEditorBehaviorStore((s) => s.enterMode);
+  const toggleEnterMode = useEditorBehaviorStore((s) => s.toggleEnterMode);
 
   const stats = useEditorState({
     editor,
@@ -168,6 +171,22 @@ export function StatusBar({
         )}
         <span className="opacity-40">·</span>
         <span className="opacity-40">UTF-8</span>
+        {/* Enter-key behavior (persisted). "line": Enter = one newline in the
+            file, Enter again on the empty line = paragraph break. "paragraph":
+            classic markdown — Enter always starts a new paragraph. */}
+        <button
+          onClick={toggleEnterMode}
+          title={
+            enterMode === "line"
+              ? "Enter inserts a line break (one newline in the file); press Enter again on the empty line for a paragraph break. Click to switch to classic paragraph mode."
+              : "Enter starts a new paragraph (blank line in the file); Shift+Enter for a line break. Click to switch to line mode."
+          }
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors hover:bg-[var(--color-border)] hover:text-[var(--color-text)]"
+          data-testid="statusbar-enter-mode"
+        >
+          <span aria-hidden="true">↵</span>
+          {enterMode === "line" ? "Enter: Line" : "Enter: Paragraph"}
+        </button>
         <button
           onClick={toggleSplitView}
           title={splitViewOpen ? "Close split view (⌘\\)" : "Split view: editor + source (⌘\\)"}

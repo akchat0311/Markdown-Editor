@@ -1,4 +1,6 @@
 import type { JSONContent } from "@tiptap/core";
+import { parseHeadingFields, fieldsStartOffset } from "@/editor/utils/headingFields";
+import { getRequirementStatuses } from "@/services/requirementStatusService";
 import type { OutlineNode } from "@/types/outline";
 
 /**
@@ -13,21 +15,98 @@ import type { OutlineNode } from "@/types/outline";
 // ── Status reset helper ───────────────────────────────────────────────────────
 
 /**
- * Replaces the trailing [Status] bracket in a heading's text nodes with [Draft].
- * Only operates on a `type: "heading"` JSON node.
+ * Status brackets are written ITALIC by default — "[*Draft*]" in markdown —
+ * which in PM JSON is three text nodes: "[", "Draft" (italic), "]". Every
+ * helper below therefore works on the heading's concatenated text with the
+ * shared field tokenizer (headingFields.ts) and splices text nodes by
+ * character range, instead of pattern-matching a single text node.
+ */
+
+/** Plain text of a heading's inline content (text nodes only — inline atoms
+ *  such as rawHtmlInline contribute nothing, matching PM's textContent). */
+function headingText(nodes: JSONContent[]): string {
+  return nodes.map((n) => (typeof n.text === "string" ? n.text : "")).join("");
+}
+
+/**
+ * Replaces the character range [from, to) of a heading's text with
+ * `replacement` nodes, splitting text nodes at the boundaries and keeping
+ * every mark on the untouched parts. `from === to` inserts.
+ */
+function spliceHeadingText(
+  nodes: JSONContent[],
+  from: number,
+  to: number,
+  replacement: JSONContent[],
+): JSONContent[] {
+  const out: JSONContent[] = [];
+  let offset = 0;
+  let inserted = false;
+  const insertOnce = () => {
+    if (!inserted) {
+      out.push(...replacement);
+      inserted = true;
+    }
+  };
+  for (const n of nodes) {
+    if (typeof n.text !== "string") {
+      // Zero-width inline atom: stays on the side of the range it is on.
+      if (offset > from) insertOnce();
+      out.push(n);
+      continue;
+    }
+    const start = offset;
+    const end = start + n.text.length;
+    offset = end;
+    if (end <= from) {
+      out.push(n);
+      continue;
+    }
+    const beforeLen = Math.max(0, from - start);
+    if (beforeLen > 0) out.push({ ...n, text: n.text.slice(0, beforeLen) });
+    insertOnce();
+    if (end > to) {
+      const afterStart = Math.max(0, to - start);
+      out.push({ ...n, text: n.text.slice(afterStart) });
+    }
+  }
+  insertOnce();
+  return out;
+}
+
+function draftLabel(statuses: ReturnType<typeof getRequirementStatuses>): string {
+  return statuses.find((s) => s.id === "draft")?.label ?? "Draft";
+}
+
+/** "[" + italic label + "]" — the canonical new-status token (see requirementHeadingOps). */
+export function statusBracketNodes(label: string): JSONContent[] {
+  return [
+    { type: "text", text: "[" },
+    { type: "text", text: label, marks: [{ type: "italic" }] },
+    { type: "text", text: "]" },
+  ];
+}
+
+/**
+ * Replaces the heading's [Status] bracket with an italic [Draft]. A trailing
+ * [Variant] bracket is left in place; a heading without a status bracket is
+ * returned unchanged. Only operates on a `type: "heading"` JSON node.
  */
 function resetHeadingNodeStatusToDraft(heading: JSONContent): JSONContent {
   const nodes = heading.content as JSONContent[] | undefined;
   if (!nodes?.length) return heading;
-  const updated = [...nodes];
-  for (let i = updated.length - 1; i >= 0; i--) {
-    const n = updated[i];
-    if (typeof n.text === "string" && /\[[^\]]+\]\s*$/.test(n.text)) {
-      updated[i] = { ...n, text: n.text.replace(/\[[^\]]+\]\s*$/, "[Draft]") };
-      return { ...heading, content: updated };
-    }
-  }
-  return heading;
+  const statuses = getRequirementStatuses();
+  const fields = parseHeadingFields(headingText(nodes), statuses);
+  if (!fields.status) return heading;
+  return {
+    ...heading,
+    content: spliceHeadingText(
+      nodes,
+      fields.status.charFrom,
+      fields.status.charTo,
+      statusBracketNodes(draftLabel(statuses)),
+    ),
+  };
 }
 
 /**
@@ -48,18 +127,24 @@ function resetHeadingStatusToDraft(block: JSONContent): JSONContent {
 }
 
 /**
- * Inserts " Copy" into the heading text immediately before its trailing
- * [Draft] bracket, or appends it at the end if no bracket is present.
+ * Inserts "Copy" into the heading text immediately before its trailing field
+ * brackets ("ID Title [*Draft*] [V2]" → "ID Title Copy [*Draft*] [V2]"), or
+ * appends " Copy" at the end when the heading has no brackets.
  * Only operates on a `type: "heading"` JSON node.
  */
 function insertCopyInHeadingNode(heading: JSONContent): JSONContent {
   const nodes = [...((heading.content ?? []) as JSONContent[])];
-  for (let i = nodes.length - 1; i >= 0; i--) {
-    const n = nodes[i];
-    if (typeof n.text === "string" && n.text.endsWith("[Draft]")) {
-      nodes[i] = { ...n, text: n.text.slice(0, -7) + "Copy [Draft]" };
-      return { ...heading, content: nodes };
-    }
+  const text = headingText(nodes);
+  const fields = parseHeadingFields(text, getRequirementStatuses());
+  const at = fieldsStartOffset(text, fields);
+  if (at < text.length) {
+    const needsSpace = at === 0 || !/\s/.test(text[at - 1]);
+    return {
+      ...heading,
+      content: spliceHeadingText(nodes, at, at, [
+        { type: "text", text: `${needsSpace ? " " : ""}Copy ` },
+      ]),
+    };
   }
   const last = nodes[nodes.length - 1];
   if (last?.type === "text") {

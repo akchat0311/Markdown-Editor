@@ -3,7 +3,9 @@ import { useEditorState } from "@tiptap/react";
 import type { Editor } from "@tiptap/react";
 import type { JSONContent } from "@tiptap/core";
 import { deriveOutline, flattenOutline } from "./deriveOutline";
-import { compileRequirementPattern, matchRequirementId, extractStatusText } from "./requirementOps";
+import { compileRequirementPattern, matchRequirementId } from "./requirementOps";
+import { parseHeadingFields, variantDisplayText } from "./headingFields";
+import { useConfigStore } from "@/stores/configStore";
 import type { RequirementPatternInput } from "./requirementOps";
 import { getNodeSectionRange } from "./outlineOps";
 import { extractBodyText } from "./extractBodyText";
@@ -39,6 +41,8 @@ export function useDocumentValidation(
 
   // React to status configuration changes (alias set affects missing-status rule).
   const statuses = useStatusConfigStore((s) => s.statuses);
+  // Variant vocabulary gates the unknown-variant rule (empty = free text).
+  const variantVocabulary = useConfigStore((s) => s.variantVocabulary);
 
   useEffect(() => {
     if (!editor || !pattern) {
@@ -71,15 +75,17 @@ export function useDocumentValidation(
           .join("")
           .trim();
 
+        const fields = parseHeadingFields(node.label, statuses);
         requirements.push({
           id: matched.id,
           num: matched.num,
-          statusText: extractStatusText(node.label),
+          statusText: fields.status ? fields.status.inner : null,
+          variantText: fields.variant ? variantDisplayText(fields.variant.inner) : null,
           bodyText,
         });
       }
 
-      setIssues(runAllValidations(requirements, validAliases, docContent));
+      setIssues(runAllValidations(requirements, validAliases, docContent, variantVocabulary));
     }, DEBOUNCE_MS);
 
     return () => {
@@ -87,7 +93,7 @@ export function useDocumentValidation(
     };
   // doc and statuses are the reactive triggers.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor, pattern, doc, statuses]);
+  }, [editor, pattern, doc, statuses, variantVocabulary]);
 
   return issues;
 }

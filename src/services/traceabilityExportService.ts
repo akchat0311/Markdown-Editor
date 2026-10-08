@@ -87,6 +87,12 @@ export function downloadTraceabilityCsv(csvContent: string, documentName: string
   const stem = documentName.replace(/\.md$/i, "");
   const fileName = `${stem}.test-traceability.csv`;
 
+  const hook = (window as unknown as { __mdreqSaveFile?: (name: string, content: string) => void }).__mdreqSaveFile;
+  if (typeof hook === "function") {
+    hook(fileName, csvContent);
+    return;
+  }
+
   const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

@@ -70,7 +70,14 @@ export function getRequirementStatuses(): RequirementStatus[] {
  * display, so the configured capitalization is never lost or rewritten).
  */
 export function normalizeStatusText(text: string): string {
-  return text.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+  // Emphasis characters are ignored so "[*Draft*]" / "[_draft_]" resolve the
+  // same as "[Draft]" (statuses are written italic by default).
+  return text
+    .trim()
+    .replace(/^[*_]+|[*_]+$/g, "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase();
 }
 
 /**
